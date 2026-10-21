@@ -56,6 +56,10 @@ and raises a **PF001 auto-exec-chain** finding when the two meet.
 
 ## Install
 
+Download a binary from the [releases page](https://github.com/howardhsieh/preflight/releases)
+(Linux, macOS and Windows, amd64 and arm64; every archive is listed in `checksums.txt`
+and carries a GitHub build-provenance attestation), or build from source:
+
 ```bash
 go install github.com/howardhsieh/preflight/cmd/preflight@latest
 ```
@@ -83,6 +87,37 @@ into the new repository.
 | `--min-severity` | `low` | hide table rows below this severity |
 | `--exclude` | | skip paths or globs (repeatable, comma-separated) |
 | `--no-color` | | also honours `NO_COLOR` |
+
+## GitHub Action
+
+Scan every pull request, and publish findings to the Security tab via SARIF:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write
+
+steps:
+  - uses: actions/checkout@v5
+  - uses: howardhsieh/preflight@v0.1.0
+    with:
+      fail-on: high            # none | low | medium | high | critical
+      sarif-file: preflight.sarif
+  - uses: github/codeql-action/upload-sarif@v3
+    with:
+      sarif_file: preflight.sarif
+```
+
+| Input | Default | |
+|---|---|---|
+| `path` | `.` | directory to scan |
+| `fail-on` | `high` | fail the step at or above this severity |
+| `exclude` | | comma-separated paths or globs to skip |
+| `sarif-file` | | also write a SARIF report here |
+| `version` | `latest` | release tag to install |
+
+Outputs: `verdict` (`CLEAN`, `REVIEW`, `DANGER`) and `score` (0–100). The action verifies
+the downloaded binary against the release checksums before running it.
 
 ## Design principles
 

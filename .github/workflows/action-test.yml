@@ -1,0 +1,27 @@
+name: action-test
+
+# Exercises action.yml from the repository itself. Run it manually after a
+# release exists (releases created by GITHUB_TOKEN do not trigger workflows).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  self:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - id: preflight
+        uses: ./
+        with:
+          fail-on: critical
+          sarif-file: preflight.sarif
+      - run: echo "verdict=${{ steps.preflight.outputs.verdict }} score=${{ steps.preflight.outputs.score }}"
+      - uses: github/codeql-action/upload-sarif@0fda7a646fd14a20daf520829ca1ae8847000819 # codeql-bundle-v2.27.3
+        with:
+          sarif_file: preflight.sarif

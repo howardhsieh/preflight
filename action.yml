@@ -1,0 +1,82 @@
+name: preflight
+description: Scan a repository for code that runs automatically when it is opened, installed or handed to an AI agent.
+author: howardhsieh
+branding:
+  icon: shield
+  color: red
+
+inputs:
+  path:
+    description: Directory to scan.
+    default: .
+  fail-on:
+    description: "Fail the step if any finding is at least this severe: none, low, medium, high, critical."
+    default: high
+  exclude:
+    description: Comma-separated paths or globs to skip.
+    default: ""
+  sarif-file:
+    description: Also write a SARIF report to this path (upload it with github/codeql-action/upload-sarif).
+    default: ""
+  version:
+    description: preflight version to install (a release tag, or "latest").
+    default: latest
+
+outputs:
+  verdict:
+    description: CLEAN, REVIEW or DANGER.
+    value: ${{ steps.scan.outputs.verdict }}
+  score:
+    description: Risk score from 0 to 100.
+    value: ${{ steps.scan.outputs.score }}
+
+runs:
+  using: composite
+  steps:
+    - name: Install preflight
+      shell: bash
+      env:
+        VERSION: ${{ inputs.version }}
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        if [ "$VERSION" = "latest" ]; then
+          VERSION=$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" \
+            "https://api.github.com/repos/howardhsieh/preflight/releases/latest" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p')
+        fi
+        os=$(uname -s | tr '[:upper:]' '[:lower:]')
+        arch=$(uname -m); case "$arch" in x86_64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; esac
+        base="https://github.com/howardhsieh/preflight/releases/download/$VERSION"
+        file="preflight_${VERSION#v}_${os}_${arch}.tar.gz"
+        tmp=$(mktemp -d)
+        curl -fsSL -o "$tmp/$file" "$base/$file"
+        curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
+        (cd "$tmp" && grep " $file\$" checksums.txt | sha256sum -c -)
+        tar -xzf "$tmp/$file" -C "$tmp" preflight
+        install -m 0755 "$tmp/preflight" "$RUNNER_TEMP/preflight"
+        "$RUNNER_TEMP/preflight" version
+      # The token is only used to avoid the anonymous API rate limit.
+      # Inputs are passed through env, never interpolated into the script.
+
+    - name: Scan
+      id: scan
+      shell: bash
+      env:
+        SCAN_PATH: ${{ inputs.path }}
+        FAIL_ON: ${{ inputs.fail-on }}
+        EXCLUDE: ${{ inputs.exclude }}
+        SARIF_FILE: ${{ inputs.sarif-file }}
+      run: |
+        set -uo pipefail
+        args=(scan "$SCAN_PATH" --fail-on "$FAIL_ON" --no-color)
+        [ -n "$EXCLUDE" ] && args+=(--exclude "$EXCLUDE")
+        if [ -n "$SARIF_FILE" ]; then
+          "$RUNNER_TEMP/preflight" "${args[@]}" -f sarif -o "$SARIF_FILE" --fail-on none
+        fi
+        "$RUNNER_TEMP/preflight" "${args[@]}" -f json -o "$RUNNER_TEMP/preflight.json" --fail-on none
+        verdict=$(sed -n 's/.*"verdict": *"\([A-Z]*\)".*/\1/p' "$RUNNER_TEMP/preflight.json" | head -1)
+        score=$(sed -n 's/.*"score": *\([0-9]*\).*/\1/p' "$RUNNER_TEMP/preflight.json" | head -1)
+        echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+        echo "score=$score" >> "$GITHUB_OUTPUT"
+        "$RUNNER_TEMP/preflight" "${args[@]}" | tee -a "$GITHUB_STEP_SUMMARY"
+        exit "${PIPESTATUS[0]}"

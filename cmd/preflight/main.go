@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/signal"
 	"strings"
+	"time"
 
 	"github.com/howardhsieh/preflight/internal/clone"
 	"github.com/howardhsieh/preflight/internal/finding"
@@ -37,6 +38,7 @@ Flags (scan, clone):
       --min-severity SEVERITY     Hide table rows below this severity (default low)
       --exclude PATH              Skip a path or glob; repeatable or comma-separated
       --no-color                  Disable colored output
+      --timeout DURATION          Give up the clone after this long (clone only, default 10m)
 
 Exit codes: 0 no blocking findings, 1 findings at or above --fail-on, 2 error.
 `
@@ -90,7 +92,9 @@ func cmdScan(args []string, stdout, stderr io.Writer, doClone bool) int {
 		format, output, failOn, minSev string
 		noColor                        bool
 		exclude                        listFlag
+		timeout                        time.Duration
 	)
+	fs.DurationVar(&timeout, "timeout", 10*time.Minute, "")
 	fs.StringVar(&format, "format", "table", "")
 	fs.StringVar(&format, "f", "table", "")
 	fs.StringVar(&output, "output", "", "")
@@ -145,6 +149,8 @@ func cmdScan(args []string, stdout, stderr io.Writer, doClone bool) int {
 		}
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 		defer stop()
+		ctx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
 		fmt.Fprintf(stderr, "preflight: cloning %s into %s (hooks, submodules and LFS disabled)\n", pos[0], target)
 		if err := clone.Run(ctx, pos[0], target); err != nil {
 			fmt.Fprintln(stderr, "preflight: clone failed:", err)
