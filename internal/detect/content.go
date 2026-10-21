@@ -27,7 +27,7 @@ var (
 	base64Re    = regexp.MustCompile(`[A-Za-z0-9+/]{400,}={0,2}`)
 	hexRe       = regexp.MustCompile(`[0-9a-fA-F]{600,}`)
 	payloadRe   = regexp.MustCompile(`(?i)(api\.npoint\.io|jsonkeeper\.com|pastebin\.com/raw|paste\.ee/r/|rentry\.co/[^\s'"]+/raw|hastebin\.com|transfer\.sh|bashupload\.com|\.trycloudflare\.com|ngrok(-free)?\.(io|app))`)
-	ipURLRe     = regexp.MustCompile(`https?://(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}`)
+	ipURLRe     = regexp.MustCompile(`https?://(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})`)
 )
 
 // isScriptFile reports whether f should get content analysis.
@@ -71,7 +71,9 @@ func lineText(data []byte, off int) string {
 // isBundled marks generated or vendored code, where long lines and inline
 // data are normal.
 func isBundled(p string) bool {
-	return strings.Contains(p, ".min.") || underDir(p, "dist") || underDir(p, "vendor") ||
+	base := path.Base(p)
+	return strings.Contains(base, ".min.") || strings.Contains(base, "bundle.") || strings.Contains(base, ".chunk.") ||
+		underDir(p, "dist") || underDir(p, "vendor") || underDir(p, "build") ||
 		underDir(p, "node_modules") || strings.HasSuffix(p, ".map")
 }
 
@@ -110,7 +112,11 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 			}
 		}
 		if !decodeDone && execCallRe.Match(line) && decodeRe.Match(line) {
-			fd := newFinding("PF702", finding.High, finding.TriggerNone, file, lineNo,
+			sev := finding.High
+			if bundled || isTestFile(file) {
+				sev = finding.Medium
+			}
+			fd := newFinding("PF702", sev, finding.TriggerNone, file, lineNo,
 				"Decodes data and executes it on the same line")
 			fd.Evidence = truncate(string(line), 160)
 			out = append(out, fd)
@@ -138,7 +144,11 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 
 	if !bundled {
 		if loc := findEncodedBlob(data); loc != nil {
-			fd := newFinding("PF704", finding.Medium, finding.TriggerNone, file, lineAt(data, loc[0]),
+			sev := finding.Medium
+			if isTestFile(file) {
+				sev = finding.Low // fixtures are usually encoded sample data
+			}
+			fd := newFinding("PF704", sev, finding.TriggerNone, file, lineAt(data, loc[0]),
 				fmt.Sprintf("Embeds a %d-character encoded blob", loc[1]-loc[0]))
 			fd.Evidence = truncate(string(data[loc[0]:loc[0]+60]), 80)
 			out = append(out, fd)
@@ -153,10 +163,16 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 	}
 
 	for _, m := range ipURLRe.FindAllSubmatchIndex(data, -1) {
-		if isPrivateIPPrefix(string(data[m[2]:m[3]]), string(data[m[4]:m[5]])) {
+		if isNonRoutableIP(string(data[m[2]:m[3]])) {
 			continue
 		}
-		fd := newFinding("PF706", finding.Medium, finding.TriggerNone, file, lineAt(data, m[0]),
+		// Raw IPs are a weak signal on their own: tests and docs use them
+		// constantly. They mostly matter as part of a chain.
+		sev := finding.Low
+		if isTestFile(file) || !scriptExts[ext(file)] {
+			sev = finding.Info
+		}
+		fd := newFinding("PF706", sev, finding.TriggerNone, file, lineAt(data, m[0]),
 			"Contacts a public IP address directly")
 		fd.Evidence = string(data[m[0]:m[1]])
 		out = append(out, fd)
@@ -165,16 +181,35 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 	return out
 }
 
+// mediaBase64Prefixes are the encodings of common file headers: PNG, JPEG,
+// GIF, ZIP/JAR/DOCX, gzip, PDF, RIFF (WebP/WAV), WOFF2 and ICO.
+var mediaBase64Prefixes = []string{"iVBOR", "/9j/", "R0lGOD", "UEsDB", "H4sI", "JVBER", "UklGR", "d09GM", "AAABAA"}
+
 func findEncodedBlob(data []byte) []int {
 	for _, loc := range base64Re.FindAllIndex(data, -1) {
-		if bytes.Contains(data[max(0, loc[0]-40):loc[0]], []byte("data:")) {
-			continue // inline images and fonts
+		before := data[max(0, loc[0]-160):loc[0]]
+		if bytes.Contains(before, []byte("data:")) || bytes.Contains(before, []byte("base64,")) ||
+			bytes.Contains(before, []byte("sourceMappingURL")) {
+			continue // inline images, fonts and source maps
 		}
-		if entropy(data[loc[0]:loc[1]]) >= 4.5 {
+		blob := data[loc[0]:loc[1]]
+		if hasAnyPrefix(blob, mediaBase64Prefixes) {
+			continue
+		}
+		if entropy(blob) >= 4.5 {
 			return loc
 		}
 	}
 	return hexRe.FindIndex(data)
+}
+
+func hasAnyPrefix(b []byte, prefixes []string) bool {
+	for _, p := range prefixes {
+		if bytes.HasPrefix(b, []byte(p)) {
+			return true
+		}
+	}
+	return false
 }
 
 func entropy(b []byte) float64 {
@@ -193,18 +228,40 @@ func entropy(b []byte) float64 {
 	return h
 }
 
-func isPrivateIPPrefix(a, b string) bool {
-	switch a {
-	case "0", "10", "127":
+// wellKnownIPs are public resolvers and the example.com address, which
+// appear in docs and tests far more often than in malware.
+var wellKnownIPs = map[string]bool{
+	"8.8.8.8": true, "8.8.4.4": true, "1.1.1.1": true, "1.0.0.1": true, "9.9.9.9": true,
+	"93.184.216.34": true, "93.184.215.14": true, "255.255.255.255": true,
+}
+
+// isNonRoutableIP reports private, loopback, link-local, carrier-grade NAT,
+// documentation (RFC 5737) and well-known public addresses.
+func isNonRoutableIP(ip string) bool {
+	if wellKnownIPs[ip] {
 		return true
-	case "192":
-		return b == "168"
-	case "169":
-		return b == "254"
-	case "172":
-		n := 0
-		fmt.Sscan(b, &n)
-		return n >= 16 && n <= 31
+	}
+	var a, b, c, d int
+	if n, _ := fmt.Sscanf(ip, "%d.%d.%d.%d", &a, &b, &c, &d); n != 4 {
+		return true
+	}
+	switch {
+	case a == 0, a == 10, a == 127:
+		return true
+	case a == 100 && b >= 64 && b <= 127:
+		return true
+	case a == 169 && b == 254:
+		return true
+	case a == 172 && b >= 16 && b <= 31:
+		return true
+	case a == 192 && (b == 168 || (b == 0 && (c == 2 || c == 0))):
+		return true
+	case a == 198 && (b == 18 || b == 19 || (b == 51 && c == 100)):
+		return true
+	case a == 203 && b == 0 && c == 113:
+		return true
+	case a >= 224:
+		return true
 	}
 	return false
 }

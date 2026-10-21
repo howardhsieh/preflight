@@ -24,8 +24,13 @@ var (
 
 	injectionRe   = regexp.MustCompile(`(?i)(ignore (all |any )?(of )?(the )?(previous|prior|above) (instructions|prompts)|disregard (the |your )?(system|previous) (prompt|instructions)|do not (tell|inform|alert) the user|without (asking|telling|notifying|informing) the user|(curl|wget)[^\n|]*\|\s*(ba|z)?sh\b)`)
 	htmlCommentRe = regexp.MustCompile(`(?s)<!--(.*?)-->`)
-	aiAddressRe   = regexp.MustCompile(`(?i)\b(ai|assistant|agent|llm|claude|copilot|cursor|gemini|codex|chatgpt|language model)\b`)
-	imperativeRe  = regexp.MustCompile(`(?i)\b(run|execute|ignore|must|always|never|send|upload|curl|wget|fetch|read|install|do not tell)\b`)
+	// A hidden comment counts as an instruction when it opens by addressing
+	// the model ("AI assistant: ...", "Note to Claude: ...") and tells it to
+	// do something, or uses classic system-prompt phrasing anywhere. Merely
+	// mentioning an agent ("TODO: update the Claude Code screenshot") does not.
+	aiAddressRe  = regexp.MustCompile(`(?i)^[\s\[\]()#*>:-]*(note|instructions?|important|attention|hey|hi|hello)?[\s:,-]*(to|for)?\s*(the\s+)?(ai|assistant|agent|llm|claude|copilot|cursor|gemini|codex|chatgpt|language model)s?\b`)
+	imperativeRe = regexp.MustCompile(`(?i)\b(run|execute|ignore|must|always|never|send|upload|curl|wget|fetch|read|install|do not tell)\b`)
+	strongPhrase = regexp.MustCompile(`(?i)\b(you are (an?|the|now)\b|system prompt|ignore (all |any )?(of )?(the )?(previous|prior|above) (instructions|prompts)|do not (tell|inform|alert) the user|without (asking|telling|notifying|informing) the user)`)
 )
 
 var packageRunners = map[string]bool{"npx": true, "bunx": true, "pnpx": true, "uvx": true, "pipx": true, "docker": true, "deno": true}
@@ -204,7 +209,7 @@ func agentText(c *Context, file string) []finding.Finding {
 	}
 	for _, m := range htmlCommentRe.FindAllSubmatchIndex(data, -1) {
 		body := data[m[2]:m[3]]
-		if aiAddressRe.Match(body) && imperativeRe.Match(body) {
+		if (aiAddressRe.Match(body) && imperativeRe.Match(body)) || strongPhrase.Match(body) {
 			fd := newFinding("PF522", finding.Medium, finding.TriggerAgent, file, lineAt(data, m[0]),
 				"Hidden HTML comment gives instructions to an AI agent")
 			fd.Evidence = truncate(string(body), 200)

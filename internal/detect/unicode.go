@@ -2,6 +2,8 @@ package detect
 
 import (
 	"fmt"
+	"path"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
@@ -19,6 +21,12 @@ var binaryExts = map[string]bool{
 	".exe": true, ".dll": true, ".so": true, ".dylib": true, ".node": true, ".bin": true, ".o": true, ".a": true,
 }
 
+// i18nPathRe marks translation resources, where right-to-left languages
+// legitimately use bidirectional control characters.
+var i18nPathRe = regexp.MustCompile(`(?i)(^|/)(i18n|l10n|locales?|lang|langs|languages|translations?|messages)(/|$)`)
+
+func isI18nPath(p string) bool { return i18nPathRe.MatchString(path.Dir(p) + "/") }
+
 func detectUnicode(c *Context) []finding.Finding {
 	var out []finding.Finding
 	for _, f := range c.Files {
@@ -33,6 +41,13 @@ func detectUnicode(c *Context) []finding.Finding {
 	}
 	return out
 }
+
+const (
+	blackFlag = 0x1F3F4 // 🏴, the base of subdivision flags such as 🏴󠁧󠁢󠁥󠁮󠁧󠁿
+	tagCancel = 0xE007F
+)
+
+func isTag(r rune) bool { return r >= 0xE0000 && r <= 0xE007F }
 
 func isBidi(r rune) bool { return (r >= 0x202A && r <= 0x202E) || (r >= 0x2066 && r <= 0x2069) }
 
@@ -54,13 +69,23 @@ func scanRunes(file string, data []byte) []finding.Finding {
 	var hidden strings.Builder
 	line := 1
 	var prev rune
+	inFlag := false // inside a 🏴 + tag sequence, which is a legitimate emoji
 	for i := 0; i < len(data); {
 		r, size := utf8.DecodeRune(data[i:])
 		next, _ := utf8.DecodeRune(data[i+size:])
 		switch {
 		case r == '\n':
 			line++
-		case r >= 0xE0000 && r <= 0xE007F:
+		case isTag(r):
+			if prev == blackFlag {
+				inFlag = true
+			}
+			if inFlag {
+				if r == tagCancel {
+					inFlag = false
+				}
+				break
+			}
 			tags.add(line)
 			if r >= 0xE0020 && r <= 0xE007E && hidden.Len() < 400 {
 				hidden.WriteRune(r - 0xE0000)
@@ -80,7 +105,11 @@ func scanRunes(file string, data []byte) []finding.Finding {
 
 	var out []finding.Finding
 	if tags.count > 0 {
-		fd := newFinding("PF601", finding.Critical, finding.TriggerNone, file, tags.line,
+		sev := finding.Critical
+		if isTestFile(file) {
+			sev = finding.Medium // test suites for tag stripping contain tags on purpose
+		}
+		fd := newFinding("PF601", sev, finding.TriggerNone, file, tags.line,
 			fmt.Sprintf("%d invisible Unicode Tag characters hide text from humans but not from AI models", tags.count))
 		if hidden.Len() > 0 {
 			fd.Evidence = "decoded: " + truncate(hidden.String(), 200)
@@ -88,7 +117,16 @@ func scanRunes(file string, data []byte) []finding.Finding {
 		out = append(out, fd)
 	}
 	if bidi.count > 0 {
-		out = append(out, newFinding("PF602", finding.High, finding.TriggerNone, file, bidi.line,
+		// Trojan Source needs the characters inside code a human reviews.
+		// Right-to-left resource files and prose use them legitimately.
+		sev := finding.High
+		switch {
+		case isI18nPath(file) || !scriptExts[ext(file)]:
+			sev = finding.Low
+		case isTestFile(file):
+			sev = finding.Medium
+		}
+		out = append(out, newFinding("PF602", sev, finding.TriggerNone, file, bidi.line,
 			fmt.Sprintf("%d bidirectional control characters can reorder how this text is displayed", bidi.count)))
 	}
 	if zw.count > 0 {
