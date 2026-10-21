@@ -14,8 +14,9 @@ LIST="$BENCH_DIR/repos.txt"
 mkdir -p "$BENCH_DIR/repos" "$BENCH_DIR/out"
 (cd "$ROOT" && go build -o "$BENCH_DIR/preflight" ./cmd/preflight)
 
-# The search API returns at most 1000 results, 100 per page.
-if [ ! -s "$LIST" ]; then
+# The search API returns at most 1000 results, 100 per page. Refetch when a
+# previous, smaller run left a short list behind.
+if [ ! -s "$LIST" ] || [ "$(wc -l < "$LIST")" -lt "$N" ]; then
   pages=$(( (N + 99) / 100 ))
   : > "$LIST"
   for p in $(seq 1 "$pages"); do
