@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"bytes"
 	"fmt"
 	"path"
 	"regexp"
@@ -138,9 +139,14 @@ func vscodeSettings(c *Context, file string, data []byte, doc map[string]any) []
 			if !ok || !execSettingRe.MatchString(leaf) || strings.Contains(s, "://") {
 				return
 			}
-			targets := commandTargets(c, "", s)
+			var targets []string
+			for _, t := range commandTargets(c, "", s) {
+				if looksExecutable(c, t) {
+					targets = append(targets, t)
+				}
+			}
 			if len(targets) == 0 {
-				return
+				return // a config file such as .prettierrc or pyproject.toml
 			}
 			fd := newFinding("PF103", finding.High, finding.TriggerIDESettings, file, line,
 				fmt.Sprintf("%s points at %s inside the repository", key, targets[0]))
@@ -150,6 +156,19 @@ func vscodeSettings(c *Context, file string, data []byte, doc map[string]any) []
 		}
 	})
 	return out
+}
+
+var execExts = map[string]bool{".exe": true, ".cmd": true, ".bat": true, ".com": true}
+
+// looksExecutable reports whether a repository file could run as a program:
+// a script by extension or shebang, a Windows executable, or a native binary.
+func looksExecutable(c *Context, p string) bool {
+	e := ext(p)
+	if scriptExts[e] || execExts[e] {
+		return true
+	}
+	head := c.Head(p, 64)
+	return bytes.HasPrefix(head, []byte("#!")) || isNative(head)
 }
 
 // walkSettings visits leaf values with their dotted keys.

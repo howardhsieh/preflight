@@ -19,11 +19,19 @@ var scriptExts = map[string]bool{
 }
 
 var (
-	offscreenRe = regexp.MustCompile(`[ \t]{150,}\S`)
+	// Code hidden past a long run of whitespace: there must be code before
+	// the gap and something that looks like code (not a table border or an
+	// aligned comment) after it.
+	offscreenRe = regexp.MustCompile(`\S[^\n]*?[ \t]{150,}(\S[^\n]{29,})`)
+	codeTailRe  = regexp.MustCompile(`[(=;{]`)
 	execCallRe  = regexp.MustCompile(`(\beval|\bexec|\bexecSync|\bspawn|\bspawnSync|\bexecFile|\bFunction|\bsystem|\bpopen|Invoke-Expression|\biex)\s*\(`)
 	decodeRe    = regexp.MustCompile(`(\batob\s*\(|Buffer\.from\([^)]*['"](base64|hex)['"]|b64decode|base64\s+(-d|--decode)|FromBase64String|String\.fromCharCode|codecs\.decode|bytes\.fromhex|unhexlify|zlib\.decompress|marshal\.loads)`)
 	networkRe   = regexp.MustCompile(`(\bfetch\s*\(|\baxios\b|https?\.(get|request)\s*\(|XMLHttpRequest|require\(\s*['"](node-fetch|request|got)['"]\s*\)|urllib\.request|urlopen|requests\.(get|post)|Invoke-WebRequest|\bcurl\s|\bwget\s)`)
-	dynExecRe   = regexp.MustCompile(`(\beval\s*\(|new\s+Function\s*\(|\bFunction\s*\(\s*['"]require|vm\.runIn\w*\(|\bexec\s*\(\s*(compile|requests|urllib|response|r\.text|res\b))`)
+	// Dynamic evaluation of a *variable*: eval(x), not eval("literal"),
+	// not a method named eval (cdp.eval), not RegExp.exec(), not def eval(.
+	dynExecRe   = regexp.MustCompile(`(?:^|[^.\w$])(eval\s*\(\s*[A-Za-z_$][\w$.]*\s*[(),]|new\s+Function\s*\(|vm\.runIn\w*\(|exec\s*\(\s*(compile|requests|urllib|response|resp|r\.text|res\.|data|content|code|payload|src|source)\b)`)
+	commentLine = regexp.MustCompile(`^\s*(//|#|\*|/\*|<!--|"""|''')`)
+	defEvalRe   = regexp.MustCompile(`\b(def|function|func)\s+eval\s*\(`)
 	base64Re    = regexp.MustCompile(`[A-Za-z0-9+/]{400,}={0,2}`)
 	hexRe       = regexp.MustCompile(`[0-9a-fA-F]{600,}`)
 	payloadRe   = regexp.MustCompile(`(?i)(api\.npoint\.io|jsonkeeper\.com|pastebin\.com/raw|paste\.ee/r/|rentry\.co/[^\s'"]+/raw|hastebin\.com|transfer\.sh|bashupload\.com|\.trycloudflare\.com|ngrok(-free)?\.(io|app))`)
@@ -51,6 +59,22 @@ func isScriptFile(c *Context, f walker.File) bool {
 // remoteExecWindow is how many bytes around a dynamic eval a network call
 // must appear in for PF703.
 const remoteExecWindow = 1500
+
+// isMinified reports generated code with very long, dense lines, where
+// decode-and-eval idioms are part of normal module loaders.
+func isMinified(data []byte) bool {
+	longest, lines := 0, 1
+	start := 0
+	for i, c := range data {
+		if c == '\n' {
+			longest = max(longest, i-start)
+			start = i + 1
+			lines++
+		}
+	}
+	longest = max(longest, len(data)-start)
+	return longest > 1500 && len(data)/lines > 400
+}
 
 var testPathRe = regexp.MustCompile(`(?i)(^|/)(tests?|__tests__|spec|specs|fixtures?|testdata|e2e)/|[._-](test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$|(^|/)conftest\.py$`)
 
@@ -96,51 +120,56 @@ func detectContent(c *Context) []finding.Finding {
 // disguised files whose extension hides that they contain code.
 func analyzeScript(file string, data []byte) []finding.Finding {
 	var out []finding.Finding
-	bundled := isBundled(file)
+	generated := isBundled(file) || isMinified(data)
+	// Decode/eval idioms are normal inside module loaders and test suites.
+	evalSev := finding.High
+	switch {
+	case generated:
+		evalSev = finding.Low
+	case isTestFile(file):
+		evalSev = finding.Medium
+	}
 
-	offscreenDone, decodeDone := false, false
-	lineNo := 0
+	offscreenDone, decodeDone, remoteDone := false, false, false
+	lineNo, offset := 0, 0
 	for _, line := range bytes.Split(data, []byte{'\n'}) {
 		lineNo++
-		if !offscreenDone {
-			if loc := offscreenRe.FindIndex(line); loc != nil {
+		lineStart := offset
+		offset += len(line) + 1
+		if !offscreenDone && !generated {
+			if m := offscreenRe.FindSubmatchIndex(line); m != nil && codeTailRe.Match(line[m[2]:m[3]]) {
 				fd := newFinding("PF701", finding.High, finding.TriggerNone, file, lineNo,
-					fmt.Sprintf("Code is hidden after %d characters of whitespace, past the edge of the editor", loc[1]-loc[0]-1))
-				fd.Evidence = truncate(string(line[loc[1]-1:]), 160)
+					"Code is hidden after a long run of whitespace, past the edge of the editor")
+				fd.Evidence = truncate(string(line[m[2]:m[3]]), 160)
 				out = append(out, fd)
 				offscreenDone = true
 			}
 		}
+		if commentLine.Match(line) {
+			continue
+		}
 		if !decodeDone && execCallRe.Match(line) && decodeRe.Match(line) {
-			sev := finding.High
-			if bundled || isTestFile(file) {
-				sev = finding.Medium
-			}
-			fd := newFinding("PF702", sev, finding.TriggerNone, file, lineNo,
+			fd := newFinding("PF702", evalSev, finding.TriggerNone, file, lineNo,
 				"Decodes data and executes it on the same line")
 			fd.Evidence = truncate(string(line), 160)
 			out = append(out, fd)
 			decodeDone = true
 		}
-	}
-
-	// A network call and a dynamic eval anywhere in the same file is too
-	// loose (test suites mention both constantly); require them to be close.
-	for _, loc := range dynExecRe.FindAllIndex(data, -1) {
-		window := data[max(0, loc[0]-remoteExecWindow):min(len(data), loc[1]+remoteExecWindow)]
-		if !networkRe.Match(window) {
-			continue
+		// A network call and a dynamic eval anywhere in the same file is
+		// too loose (test suites mention both constantly); require them to
+		// be close together.
+		if !remoteDone && dynExecRe.Match(line) && !defEvalRe.Match(line) {
+			window := data[max(0, lineStart-remoteExecWindow):min(len(data), lineStart+len(line)+remoteExecWindow)]
+			if networkRe.Match(window) {
+				fd := newFinding("PF703", evalSev, finding.TriggerNone, file, lineNo,
+					"Downloads data and evaluates it as code")
+				fd.Evidence = truncate(string(line), 160)
+				out = append(out, fd)
+				remoteDone = true
+			}
 		}
-		sev := finding.High
-		if bundled || isTestFile(file) {
-			sev = finding.Medium
-		}
-		fd := newFinding("PF703", sev, finding.TriggerNone, file, lineAt(data, loc[0]),
-			"Downloads data and evaluates it as code")
-		fd.Evidence = truncate(lineText(data, loc[0]), 160)
-		out = append(out, fd)
-		break
 	}
+	bundled := generated
 
 	if !bundled {
 		if loc := findEncodedBlob(data); loc != nil {

@@ -82,7 +82,14 @@ func correlate(fs []finding.Finding) []finding.Finding {
 	var chains []finding.Finding
 	for _, f := range fs {
 		for _, t := range f.Targets {
-			hits := content[t]
+			var hits []finding.Finding
+			for _, h := range content[t] {
+				// Behind a command the user types, only strong content
+				// signals are worth a chain; build scripts hit medium ones.
+				if f.Trigger != finding.TriggerRun || h.Severity >= finding.High {
+					hits = append(hits, h)
+				}
+			}
 			if len(hits) == 0 {
 				continue
 			}
@@ -144,8 +151,9 @@ var weights = map[finding.Severity]int{finding.Low: 2, finding.Medium: 8, findin
 // scored like one with many different problems.
 const maxPerRule = 3
 
-// reviewThreshold is the score at which medium/low findings alone trigger REVIEW.
-const reviewThreshold = 30
+// reviewThreshold is the score at which medium/low findings alone trigger
+// REVIEW: three different medium rules, each at the cap.
+const reviewThreshold = 50
 
 // Score turns findings into a 0-100 risk score and a verdict.
 func Score(fs []finding.Finding) (int, string) {

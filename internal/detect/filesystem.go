@@ -65,6 +65,12 @@ func actualType(head []byte) string {
 	return ""
 }
 
+// isLFSPointer recognises a Git LFS pointer, which is what a clone without
+// LFS smudging leaves in place of a large binary.
+func isLFSPointer(h []byte) bool {
+	return bytes.HasPrefix(h, []byte("version https://git-lfs.github.com/spec/"))
+}
+
 func isNative(h []byte) bool {
 	return hasPrefix("\x7fELF", "\xfe\xed\xfa\xce", "\xfe\xed\xfa\xcf", "\xce\xfa\xed\xfe", "\xcf\xfa\xed\xfe", "MZ")(h) ||
 		(bytes.HasPrefix(h, []byte("\xca\xfe\xba\xbe")) && len(h) > 7 && h[7] < 20) // fat Mach-O, not a Java class
@@ -112,6 +118,9 @@ func detectFilesystem(c *Context) []finding.Finding {
 		}
 		e := ext(f.Path)
 		head := c.Head(f.Path, 512)
+		if isLFSPointer(head) {
+			continue // the real content was never fetched
+		}
 		if want, ok := magicByExt[e]; ok && !want(head) {
 			out = append(out, disguised(c, f.Path, e, head)...)
 			continue
@@ -159,7 +168,11 @@ func symlinkEscape(file, target string) (finding.Finding, bool) {
 	if !path.IsAbs(t) && !filepath.IsAbs(target) && joined != ".." && !strings.HasPrefix(joined, "../") {
 		return finding.Finding{}, false
 	}
-	fd := newFinding("PF803", finding.High, finding.TriggerNone, file, 0,
+	sev := finding.High
+	if isTestFile(file) {
+		sev = finding.Low // symlink handling is a common thing to test
+	}
+	fd := newFinding("PF803", sev, finding.TriggerNone, file, 0,
 		"Symlink points outside the repository")
 	fd.Evidence = target
 	return fd, true

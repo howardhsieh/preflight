@@ -1,6 +1,7 @@
 package detect
 
 import (
+	"bytes"
 	"fmt"
 	"path"
 	"regexp"
@@ -23,9 +24,20 @@ var binaryExts = map[string]bool{
 
 // i18nPathRe marks translation resources, where right-to-left languages
 // legitimately use bidirectional control characters.
-var i18nPathRe = regexp.MustCompile(`(?i)(^|/)(i18n|l10n|locales?|lang|langs|languages|translations?|messages)(/|$)`)
+var i18nPathRe = regexp.MustCompile(`(?i)(^|/)(i18n|l10n|locales?|lang|langs|languages?|translations?|messages)(/|$)`)
 
 func isI18nPath(p string) bool { return i18nPathRe.MatchString(path.Dir(p) + "/") }
+
+// isMarkup catches XML files with code-like extensions, such as Qt's
+// translation .ts files.
+func isMarkup(data []byte) bool {
+	head := bytes.TrimSpace(data[:min(len(data), 64)])
+	return bytes.HasPrefix(head, []byte("<?xml")) || bytes.HasPrefix(head, []byte("<!DOCTYPE"))
+}
+
+var dataExts = map[string]bool{".txt": true, ".json": true, ".csv": true, ".tsv": true, ".yaml": true, ".yml": true, ".xml": true}
+
+var lettersOnly = regexp.MustCompile(`^[a-z]+$`)
 
 func detectUnicode(c *Context) []finding.Finding {
 	var out []finding.Finding
@@ -105,23 +117,31 @@ func scanRunes(file string, data []byte) []finding.Finding {
 
 	var out []finding.Finding
 	if tags.count > 0 {
+		decoded := hidden.String()
+		// Smuggled instructions decode to words. A handful of tag letters
+		// (an unlisted subdivision flag) or bare tag controls do not.
 		sev := finding.Critical
-		if isTestFile(file) {
+		switch {
+		case len(decoded) < 6 || (len(decoded) <= 8 && lettersOnly.MatchString(decoded)):
+			sev = finding.Low
+		case isTestFile(file):
 			sev = finding.Medium // test suites for tag stripping contain tags on purpose
+		case dataExts[ext(file)]:
+			sev = finding.High // string corpora and unicode data tables
 		}
 		fd := newFinding("PF601", sev, finding.TriggerNone, file, tags.line,
 			fmt.Sprintf("%d invisible Unicode Tag characters hide text from humans but not from AI models", tags.count))
-		if hidden.Len() > 0 {
-			fd.Evidence = "decoded: " + truncate(hidden.String(), 200)
+		if decoded != "" {
+			fd.Evidence = "decoded: " + truncate(decoded, 200)
 		}
 		out = append(out, fd)
 	}
 	if bidi.count > 0 {
 		// Trojan Source needs the characters inside code a human reviews.
-		// Right-to-left resource files and prose use them legitimately.
+		// Right-to-left resource files, prose and bundles use them legitimately.
 		sev := finding.High
 		switch {
-		case isI18nPath(file) || !scriptExts[ext(file)]:
+		case isI18nPath(file) || !scriptExts[ext(file)] || isMarkup(data) || isBundled(file) || isMinified(data):
 			sev = finding.Low
 		case isTestFile(file):
 			sev = finding.Medium

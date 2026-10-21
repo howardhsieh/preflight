@@ -29,10 +29,15 @@ func detectDevcontainer(c *Context) []finding.Finding {
 		}
 		if v, ok := doc["initializeCommand"]; ok {
 			cmd := commandString(v)
-			fd := newFinding("PF201", finding.High, finding.TriggerContainer, f.Path, lineOf(data, "initializeCommand"),
+			targets := commandTargets(c, "", cmd)
+			sev := finding.Medium // e.g. an echo or git config
+			if len(targets) > 0 || riskyCmdRe.MatchString(cmd) {
+				sev = finding.High
+			}
+			fd := newFinding("PF201", sev, finding.TriggerContainer, f.Path, lineOf(data, "initializeCommand"),
 				"initializeCommand runs on your host machine (not in the container) when the dev container opens")
 			fd.Evidence = truncate(cmd, 300)
-			fd.Targets = commandTargets(c, "", cmd)
+			fd.Targets = targets
 			out = append(out, fd)
 		}
 		for _, k := range lifecycleKeys {

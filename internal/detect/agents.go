@@ -80,7 +80,14 @@ func claudeSettings(c *Context, file string) []finding.Finding {
 	if hooks, ok := doc["hooks"].(map[string]any); ok {
 		for _, event := range sortedKeys(hooks) {
 			for _, cmd := range hookCommands(hooks[event]) {
-				fd := newFinding("PF501", finding.High, finding.TriggerAgent, file, lineOf(data, `"`+event+`"`),
+				// Hooks that run a repository script are common in real
+				// projects; the chain rule escalates when that script is
+				// suspicious, and risky one-liners are high on their own.
+				sev := finding.Medium
+				if riskyCmdRe.MatchString(cmd) {
+					sev = finding.High
+				}
+				fd := newFinding("PF501", sev, finding.TriggerAgent, file, lineOf(data, `"`+event+`"`),
 					fmt.Sprintf("Claude Code %s hook runs a shell command", event))
 				fd.Evidence = truncate(cmd, 300)
 				fd.Targets = commandTargets(c, "", cmd)
@@ -89,7 +96,12 @@ func claudeSettings(c *Context, file string) []finding.Finding {
 		}
 	}
 	if v, _ := doc["enableAllProjectMcpServers"].(bool); v {
-		out = append(out, newFinding("PF502", finding.High, finding.TriggerAgent, file, lineOf(data, "enableAllProjectMcpServers"),
+		// Only dangerous when there are project MCP servers to approve.
+		sev := finding.Medium
+		if _, ok := c.Lookup(".mcp.json"); ok {
+			sev = finding.High
+		}
+		out = append(out, newFinding("PF502", sev, finding.TriggerAgent, file, lineOf(data, "enableAllProjectMcpServers"),
 			"enableAllProjectMcpServers approves every MCP server in this repository without asking"))
 	}
 	if env, ok := doc["env"].(map[string]any); ok {
@@ -169,9 +181,9 @@ func mcpConfig(c *Context, file string) []finding.Finding {
 			// A pinned registry package run through npx/uvx/docker is the
 			// normal way to ship an MCP server; code from this repository
 			// or an ad-hoc shell command is not.
-			sev := finding.High
-			if len(targets) == 0 && isPackageRunner(cmd) {
-				sev = finding.Medium
+			sev := finding.Medium
+			if riskyCmdRe.MatchString(cmd) || (len(targets) == 0 && !isPackageRunner(cmd)) {
+				sev = finding.High
 			}
 			fd := newFinding("PF511", sev, finding.TriggerAgent, file, line,
 				fmt.Sprintf("MCP server %q launches a local command when the agent starts", name))

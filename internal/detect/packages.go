@@ -24,6 +24,13 @@ var (
 	setupExecRe   = regexp.MustCompile(`(subprocess|os\.system|os\.popen|\bexec\(|\beval\(|__import__)`)
 	setupNetRe    = regexp.MustCompile(`(urllib|urlopen|requests\.|http\.client|socket\.|urlretrieve)`)
 	buildRsRiskRe = regexp.MustCompile(`(Command::new|TcpStream|reqwest|ureq::)`)
+	// Inline node/python one-liners in install scripts, and the subset that
+	// actually reach out or spawn something.
+	inlineGuardRe  = regexp.MustCompile(`(?i)(node\s+-e|python[0-9.]*\s+-c)`)
+	inlineDangerRe = regexp.MustCompile(`(?i)(child_process|spawn|execSync|\bexec\(|https?://|fetch\(|atob|base64|subprocess|urllib|requests\.|\bcurl\b|\bwget\b|powershell)`)
+	// direnv files: fetching a pinned stdlib or evaluating a tool's output
+	// is normal; piping the network into a shell is not.
+	envrcDangerRe = regexp.MustCompile(`(?i)(\bcurl\b|\bwget\b|base64|powershell|\|\s*(ba|z)?sh\b)`)
 )
 
 func detectPackages(c *Context) []finding.Finding {
@@ -86,6 +93,9 @@ func npmPackage(c *Context, file string) []finding.Finding {
 			targets := commandTargets(c, dir, script)
 			sev := finding.Medium
 			switch {
+			case inlineGuardRe.MatchString(script) && !inlineDangerRe.MatchString(script):
+				// node -e "try { require('husky') } catch { process.exit(0) }"
+				// style guards are inline code, but do nothing interesting.
 			case riskyCmdRe.MatchString(script):
 				sev = finding.High
 			case len(targets) == 0 && isKnownInstallTool(script):
@@ -170,12 +180,14 @@ func setupPy(c *Context, file string) []finding.Finding {
 	if execLoc == nil && netLoc == nil {
 		return nil
 	}
-	sev, loc, msg := finding.Medium, execLoc, "setup.py runs commands at install time"
+	// Running a command (usually git describe for the version) is routine;
+	// talking to the network is not; doing both is the download-and-run shape.
+	sev, loc, msg := finding.Low, execLoc, "setup.py runs commands at install time"
 	switch {
 	case execLoc != nil && netLoc != nil:
 		sev, msg = finding.High, "setup.py runs commands and makes network requests at install time"
 	case execLoc == nil:
-		loc, msg = netLoc, "setup.py makes network requests at install time"
+		sev, loc, msg = finding.Medium, netLoc, "setup.py makes network requests at install time"
 	}
 	return []finding.Finding{newFinding("PF311", sev, finding.TriggerInstall, file, lineAt(data, loc[0]), msg)}
 }
@@ -196,7 +208,7 @@ func envrc(c *Context, file string) []finding.Finding {
 	}
 	body := strings.Join(lines, " ; ")
 	sev := finding.Medium
-	if riskyCmdRe.MatchString(body) {
+	if envrcDangerRe.MatchString(body) {
 		sev = finding.High
 	}
 	fd := newFinding("PF321", sev, finding.TriggerShellEnter, file, 1,
