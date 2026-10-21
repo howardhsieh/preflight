@@ -400,6 +400,29 @@ func TestBenchmarkFalsePositivesRound3(t *testing.T) {
 		}
 	}
 
+	// Round 4: reference files, SVG favicons, local MCP tools, RegExp.exec.
+	root4 := writeRepo(t, map[string]string{
+		"tests/ref/lavf/h264.mp4": "#tb 0: 1/1200000\n0, 0, 0, 1, 1234, 0x5e2d4f1c\n",
+		"demo/src/favicon.ico":    "<svg xmlns=\"http://www.w3.org/2000/svg\"></svg>\n",
+		".vscode/mcp.json":        `{"servers":{"brew":{"command":"brew","args":["mcp-server"]}}}`,
+		"src/math.ts":             "if (/\\s/.exec(String.fromCharCode(next))) { skip(); }\n",
+		"package.json":            `{"scripts":{"postinstall":"node -e \"const cp=require('child_process'); if(process.env.CI) cp.execSync('echo ci')\""}}`,
+		"lib/loader.js": "export async function load(name) {\n" + strings.Repeat("  // framework plugin loader\n", 200) +
+			"  const res = await fetch(registry + name);\n  const src = await res.text();\n  return new Function('exports', src);\n}\n",
+	})
+	res4 := mustScan(t, root4, Options{})
+	if res4.Verdict != VerdictClean {
+		t.Errorf("round 4 verdict = %s:\n%s", res4.Verdict, dump(res4))
+	}
+	if f := findRule(res4, "PF702"); f != nil {
+		t.Errorf("RegExp.exec matched PF702: %+v", f)
+	}
+	for _, f := range res4.Findings {
+		if f.Severity >= finding.High {
+			t.Errorf("unexpected high: %s %s", f.RuleID, f.File)
+		}
+	}
+
 	// A string corpus full of tag characters is worth a look, not an alarm.
 	corpus := writeRepo(t, map[string]string{"data/blns.txt": "\U000E0068\U000E0065\U000E006C\U000E006C\U000E006F\U000E0020\U000E0077\U000E006F\U000E0072\U000E006C\U000E0064\n"})
 	if r := mustScan(t, corpus, Options{}); r.Verdict != VerdictReview || findRule(r, "PF601").Severity != finding.High {

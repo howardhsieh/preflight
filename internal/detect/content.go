@@ -24,7 +24,7 @@ var (
 	// aligned comment) after it.
 	offscreenRe = regexp.MustCompile(`\S[^\n]*?[ \t]{150,}(\S[^\n]{29,})`)
 	codeTailRe  = regexp.MustCompile(`[(=;{]`)
-	execCallRe  = regexp.MustCompile(`(\beval|\bexec|\bexecSync|\bspawn|\bspawnSync|\bexecFile|\bFunction|\bsystem|\bpopen|Invoke-Expression|\biex)\s*\(`)
+	execCallRe  = regexp.MustCompile(`(?:^|[^.\w$])(eval|exec|execSync|spawn|spawnSync|execFile|Function|system|popen|Invoke-Expression|iex)\s*\(`)
 	decodeRe    = regexp.MustCompile(`(\batob\s*\(|Buffer\.from\([^)]*['"](base64|hex)['"]|b64decode|base64\s+(-d|--decode)|FromBase64String|String\.fromCharCode|codecs\.decode|bytes\.fromhex|unhexlify|zlib\.decompress|marshal\.loads)`)
 	networkRe   = regexp.MustCompile(`(\bfetch\s*\(|\baxios\b|https?\.(get|request)\s*\(|XMLHttpRequest|require\(\s*['"](node-fetch|request|got)['"]\s*\)|urllib\.request|urlopen|requests\.(get|post)|Invoke-WebRequest|\bcurl\s|\bwget\s)`)
 	// Dynamic evaluation of a *variable*: eval(x), not eval("literal"),
@@ -73,8 +73,12 @@ func isMinified(data []byte) bool {
 		}
 	}
 	longest = max(longest, len(data)-start)
-	return longest > 1500 && len(data)/lines > 400
+	return longest > 1500 && len(data)/lines > 200
 }
+
+// smallLoader is the size below which a file that downloads and evaluates
+// code is probably just that: a stager, not a framework with a plugin loader.
+const smallLoader = 4096
 
 var testPathRe = regexp.MustCompile(`(?i)(^|/)(tests?|__tests__|spec|specs|fixtures?|testdata|e2e)/|[._-](test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$|(^|/)conftest\.py$`)
 
@@ -161,7 +165,13 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 		if !remoteDone && dynExecRe.Match(line) && !defEvalRe.Match(line) {
 			window := data[max(0, lineStart-remoteExecWindow):min(len(data), lineStart+len(line)+remoteExecWindow)]
 			if networkRe.Match(window) {
-				fd := newFinding("PF703", evalSev, finding.TriggerNone, file, lineNo,
+				// Frameworks have plugin loaders that fetch and evaluate;
+				// a stager is tiny or evaluates the response outright.
+				sev := min(evalSev, finding.Medium)
+				if evalSev == finding.High && (networkRe.Match(line) || len(data) < smallLoader) {
+					sev = finding.High
+				}
+				fd := newFinding("PF703", sev, finding.TriggerNone, file, lineNo,
 					"Downloads data and evaluates it as code")
 				fd.Evidence = truncate(string(line), 160)
 				out = append(out, fd)

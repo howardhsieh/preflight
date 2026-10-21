@@ -149,8 +149,19 @@ func disguised(c *Context, file, e string, head []byte) []finding.Finding {
 			// Run the script heuristics too, since the extension hid it from them.
 			return append([]finding.Finding{fd}, analyzeScript(file, data)...)
 		}
-		return []finding.Finding{newFinding("PF801", finding.High, finding.TriggerNone, file, 0,
-			fmt.Sprintf("Text file disguised as a %s file", e))}
+		trimmed := bytes.TrimSpace(head)
+		switch {
+		case bytes.HasPrefix(trimmed, []byte("<svg")) || bytes.HasPrefix(trimmed, []byte("<?xml")):
+			return []finding.Finding{newFinding("PF801", finding.Info, finding.TriggerNone, file, 0,
+				fmt.Sprintf("File is really SVG/XML, not a %s", e))}
+		case isTestFile(file):
+			// Reference outputs and fixtures routinely borrow media extensions.
+			return []finding.Finding{newFinding("PF801", finding.Info, finding.TriggerNone, file, 0,
+				fmt.Sprintf("Text file with a %s extension (test data)", e))}
+		}
+		// Text that is not code cannot run; it is odd, not dangerous.
+		return []finding.Finding{newFinding("PF801", finding.Low, finding.TriggerNone, file, 0,
+			fmt.Sprintf("Text file with a %s extension", e))}
 	default:
 		if real := actualType(head); real != "" {
 			// A PNG saved as .jpg is sloppy, not dangerous.

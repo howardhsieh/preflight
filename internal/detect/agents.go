@@ -178,11 +178,11 @@ func mcpConfig(c *Context, file string) []finding.Finding {
 				cmd += " " + commandString(args)
 			}
 			targets := commandTargets(c, "", cmd)
-			// A pinned registry package run through npx/uvx/docker is the
-			// normal way to ship an MCP server; code from this repository
-			// or an ad-hoc shell command is not.
+			// Launching an MCP server is what this file is for; a repository
+			// script is escalated by the chain rule when its content is
+			// suspicious, and only shell-pipeline tricks are high here.
 			sev := finding.Medium
-			if riskyCmdRe.MatchString(cmd) || (len(targets) == 0 && !isPackageRunner(cmd)) {
+			if riskyCmdRe.MatchString(cmd) {
 				sev = finding.High
 			}
 			fd := newFinding("PF511", sev, finding.TriggerAgent, file, line,

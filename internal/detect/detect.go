@@ -175,6 +175,7 @@ func underDir(p, dir string) bool {
 var pathVarPrefixes = []string{
 	"${workspaceFolder}/", "${workspaceRoot}/", "${containerWorkspaceFolder}/",
 	"${localWorkspaceFolder}/", "$CLAUDE_PROJECT_DIR/", "${CLAUDE_PROJECT_DIR}/",
+	"$CLAUDE_PLUGIN_ROOT/", "${CLAUDE_PLUGIN_ROOT}/",
 }
 
 // commandTargets returns repository files referenced by a command line,

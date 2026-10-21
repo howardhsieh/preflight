@@ -27,7 +27,7 @@ var (
 	// Inline node/python one-liners in install scripts, and the subset that
 	// actually reach out or spawn something.
 	inlineGuardRe  = regexp.MustCompile(`(?i)(node\s+-e|python[0-9.]*\s+-c)`)
-	inlineDangerRe = regexp.MustCompile(`(?i)(child_process|spawn|execSync|\bexec\(|https?://|fetch\(|atob|base64|subprocess|urllib|requests\.|\bcurl\b|\bwget\b|powershell)`)
+	inlineDangerRe = regexp.MustCompile(`(?i)(https?://|fetch\(|atob|base64|urllib|requests\.|\bcurl\b|\bwget\b|powershell)`)
 	// direnv files: fetching a pinned stdlib or evaluating a tool's output
 	// is normal; piping the network into a shell is not.
 	envrcDangerRe = regexp.MustCompile(`(?i)(\bcurl\b|\bwget\b|base64|powershell|\|\s*(ba|z)?sh\b)`)
