@@ -122,12 +122,12 @@ func scanRunes(file string, data []byte) []finding.Finding {
 		// (an unlisted subdivision flag) or bare tag controls do not.
 		sev := finding.Critical
 		switch {
-		case len(decoded) < 6 || (len(decoded) <= 8 && lettersOnly.MatchString(decoded)):
-			sev = finding.Low
+		case len(decoded) < 6 || lettersOnly.MatchString(decoded):
+			sev = finding.Low // bare controls, or subdivision-flag letters without their base
 		case isTestFile(file):
 			sev = finding.Medium // test suites for tag stripping contain tags on purpose
-		case dataExts[ext(file)]:
-			sev = finding.High // string corpora and unicode data tables
+		case dataExts[ext(file)] || !strings.Contains(decoded, " "):
+			sev = finding.High // string corpora, unicode tables, character-set dumps
 		}
 		fd := newFinding("PF601", sev, finding.TriggerNone, file, tags.line,
 			fmt.Sprintf("%d invisible Unicode Tag characters hide text from humans but not from AI models", tags.count))

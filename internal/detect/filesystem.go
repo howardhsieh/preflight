@@ -142,6 +142,13 @@ func disguised(c *Context, file, e string, head []byte) []finding.Finding {
 			fmt.Sprintf("Compiled executable disguised with a %s extension", e))}
 	case looksText(head):
 		data, _ := c.Read(file)
+		lower := bytes.ToLower(bytes.TrimSpace(head))
+		if bytes.HasPrefix(lower, []byte("<!doctype html")) || bytes.HasPrefix(lower, []byte("<html")) {
+			// A web page saved where a binary should be: a broken download,
+			// not something a trigger can execute.
+			return []finding.Finding{newFinding("PF801", finding.Low, finding.TriggerNone, file, 0,
+				fmt.Sprintf("HTML page saved with a %s extension", e))}
+		}
 		if looksLikeCode(data) {
 			fd := newFinding("PF801", finding.Critical, finding.TriggerNone, file, 0,
 				fmt.Sprintf("Script code disguised as a %s file", e))

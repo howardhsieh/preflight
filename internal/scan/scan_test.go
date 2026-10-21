@@ -423,6 +423,33 @@ func TestBenchmarkFalsePositivesRound3(t *testing.T) {
 		}
 	}
 
+	// Round 5: broken downloads and character-set dumps are not stagers.
+	root5 := writeRepo(t, map[string]string{
+		"fonts/STIX-Regular.otf": "<!DOCTYPE html>\n<html lang=\"en\"><head><script>function f(){}</script></head></html>\n",
+		"internal/resource.go":   "package internal\n\nconst naughty = \"\U000E0021\U000E0022\U000E0023\U000E0041\U000E0042\U000E0043\U000E0044\U000E0045\"\n",
+		"utils/emoji.py":         "FLAGS = '\U000E0067\U000E0062\U000E0065\U000E006E\U000E0067\U000E0067\U000E0062\U000E0073\U000E0063\U000E0074'\n",
+	})
+	res5 := mustScan(t, root5, Options{})
+	if res5.Verdict == VerdictDanger {
+		t.Errorf("round 5 verdict = DANGER:\n%s", dump(res5))
+	}
+	for _, f := range res5.Findings {
+		switch f.File {
+		case "fonts/STIX-Regular.otf":
+			if f.Severity > finding.Low {
+				t.Errorf("HTML-as-font = %s, want low", f.Severity)
+			}
+		case "utils/emoji.py":
+			if f.RuleID == "PF601" && f.Severity != finding.Low {
+				t.Errorf("flag letters without base = %s, want low", f.Severity)
+			}
+		case "internal/resource.go":
+			if f.RuleID == "PF601" && f.Severity != finding.High {
+				t.Errorf("charset dump = %s, want high", f.Severity)
+			}
+		}
+	}
+
 	// A string corpus full of tag characters is worth a look, not an alarm.
 	corpus := writeRepo(t, map[string]string{"data/blns.txt": "\U000E0068\U000E0065\U000E006C\U000E006C\U000E006F\U000E0020\U000E0077\U000E006F\U000E0072\U000E006C\U000E0064\n"})
 	if r := mustScan(t, corpus, Options{}); r.Verdict != VerdictReview || findRule(r, "PF601").Severity != finding.High {
