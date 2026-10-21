@@ -28,6 +28,15 @@ var (
 	imperativeRe  = regexp.MustCompile(`(?i)\b(run|execute|ignore|must|always|never|send|upload|curl|wget|fetch|read|install|do not tell)\b`)
 )
 
+var packageRunners = map[string]bool{"npx": true, "bunx": true, "pnpx": true, "uvx": true, "pipx": true, "docker": true, "deno": true}
+
+// isPackageRunner reports whether cmd starts with a tool that fetches a
+// named package from a registry (optionally after `-y`/`run` style flags).
+func isPackageRunner(cmd string) bool {
+	fields := strings.Fields(cmd)
+	return len(fields) >= 2 && packageRunners[path.Base(fields[0])]
+}
+
 func isAgentInstructionFile(p string) bool {
 	return agentInstructionNames[path.Base(p)] ||
 		underDir(p, ".cursor/rules") || underDir(p, ".claude/commands") ||
@@ -151,10 +160,18 @@ func mcpConfig(c *Context, file string) []finding.Finding {
 			if args, ok := s["args"].([]any); ok {
 				cmd += " " + commandString(args)
 			}
-			fd := newFinding("PF511", finding.High, finding.TriggerAgent, file, line,
+			targets := commandTargets(c, "", cmd)
+			// A pinned registry package run through npx/uvx/docker is the
+			// normal way to ship an MCP server; code from this repository
+			// or an ad-hoc shell command is not.
+			sev := finding.High
+			if len(targets) == 0 && isPackageRunner(cmd) {
+				sev = finding.Medium
+			}
+			fd := newFinding("PF511", sev, finding.TriggerAgent, file, line,
 				fmt.Sprintf("MCP server %q launches a local command when the agent starts", name))
 			fd.Evidence = truncate(cmd, 300)
-			fd.Targets = commandTargets(c, "", cmd)
+			fd.Targets = targets
 			out = append(out, fd)
 		} else if url := str(s["url"]); url != "" {
 			fd := newFinding("PF512", finding.Medium, finding.TriggerAgent, file, line,
@@ -174,7 +191,9 @@ func agentText(c *Context, file string) []finding.Finding {
 	agentFile := isAgentInstructionFile(file)
 	var out []finding.Finding
 	if loc := injectionRe.FindIndex(data); loc != nil {
-		sev := finding.Low
+		// Ordinary docs that mention "ignore previous instructions" are
+		// usually *about* prompt injection; only files an agent obeys count.
+		sev := finding.Info
 		if agentFile {
 			sev = finding.Medium
 		}

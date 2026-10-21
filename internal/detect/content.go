@@ -48,6 +48,26 @@ func isScriptFile(c *Context, f walker.File) bool {
 	return false
 }
 
+// remoteExecWindow is how many bytes around a dynamic eval a network call
+// must appear in for PF703.
+const remoteExecWindow = 1500
+
+var testPathRe = regexp.MustCompile(`(?i)(^|/)(tests?|__tests__|spec|specs|fixtures?|testdata|e2e)/|[._-](test|spec)\.[a-z]+$|(^|/)test_[^/]+\.py$|(^|/)conftest\.py$`)
+
+func isTestFile(p string) bool { return testPathRe.MatchString(p) }
+
+// lineText returns the full line containing byte offset off.
+func lineText(data []byte, off int) string {
+	start := bytes.LastIndexByte(data[:off], '\n') + 1
+	end := bytes.IndexByte(data[off:], '\n')
+	if end < 0 {
+		end = len(data)
+	} else {
+		end += off
+	}
+	return string(data[start:end])
+}
+
 // isBundled marks generated or vendored code, where long lines and inline
 // data are normal.
 func isBundled(p string) bool {
@@ -98,15 +118,22 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 		}
 	}
 
-	if networkRe.Match(data) {
-		if loc := dynExecRe.FindIndex(data); loc != nil {
-			sev := finding.High
-			if bundled {
-				sev = finding.Medium
-			}
-			out = append(out, newFinding("PF703", sev, finding.TriggerNone, file, lineAt(data, loc[0]),
-				"Downloads data and evaluates it as code"))
+	// A network call and a dynamic eval anywhere in the same file is too
+	// loose (test suites mention both constantly); require them to be close.
+	for _, loc := range dynExecRe.FindAllIndex(data, -1) {
+		window := data[max(0, loc[0]-remoteExecWindow):min(len(data), loc[1]+remoteExecWindow)]
+		if !networkRe.Match(window) {
+			continue
 		}
+		sev := finding.High
+		if bundled || isTestFile(file) {
+			sev = finding.Medium
+		}
+		fd := newFinding("PF703", sev, finding.TriggerNone, file, lineAt(data, loc[0]),
+			"Downloads data and evaluates it as code")
+		fd.Evidence = truncate(lineText(data, loc[0]), 160)
+		out = append(out, fd)
+		break
 	}
 
 	if !bundled {

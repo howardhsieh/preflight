@@ -92,9 +92,14 @@ func scanRunes(file string, data []byte) []finding.Finding {
 			fmt.Sprintf("%d bidirectional control characters can reorder how this text is displayed", bidi.count)))
 	}
 	if zw.count > 0 {
-		sev := finding.Low
-		if isAgentInstructionFile(file) {
+		// Stray zero-width spaces are common in copied prose; they matter
+		// in files an agent obeys or code a human reviews.
+		sev := finding.Info
+		switch {
+		case isAgentInstructionFile(file):
 			sev = finding.Medium
+		case scriptExts[ext(file)]:
+			sev = finding.Low
 		}
 		out = append(out, newFinding("PF603", sev, finding.TriggerNone, file, zw.line,
 			fmt.Sprintf("%d zero-width characters are hidden in the text", zw.count)))

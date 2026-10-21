@@ -83,14 +83,20 @@ func npmPackage(c *Context, file string) []finding.Finding {
 		}
 		switch {
 		case installScripts[name]:
+			targets := commandTargets(c, dir, script)
 			sev := finding.Medium
-			if riskyCmdRe.MatchString(script) {
+			switch {
+			case riskyCmdRe.MatchString(script):
 				sev = finding.High
+			case len(targets) == 0 && isKnownInstallTool(script):
+				// "prepare": "husky" and friends are in half of all
+				// JavaScript projects; still worth listing, not worth a score.
+				sev = finding.Low
 			}
 			fd := newFinding("PF301", sev, finding.TriggerInstall, file, line,
 				fmt.Sprintf("%q script runs automatically during npm install", name))
 			fd.Evidence = truncate(script, 300)
-			fd.Targets = commandTargets(c, dir, script)
+			fd.Targets = targets
 			out = append(out, fd)
 		case runScripts[name]:
 			// Interview "take-home" repos usually ask you to run npm start or
@@ -118,6 +124,31 @@ func npmPackage(c *Context, file string) []finding.Finding {
 		}
 	}
 	return out
+}
+
+var knownInstallTools = map[string]bool{
+	"husky": true, "simple-git-hooks": true, "lefthook": true, "prisma": true, "patch-package": true,
+	"node-gyp": true, "node-gyp-build": true, "prebuild-install": true, "electron-builder": true,
+	"electron-rebuild": true, "lerna": true, "tsc": true, "nx": true, "turbo": true, "npm": true,
+	"pnpm": true, "yarn": true, "playwright": true, "cypress": true, "is-ci": true, "opencollective": true,
+	"opencollective-postinstall": true, "bower": true, "ngcc": true, "svelte-kit": true, "nuxt": true,
+	"next": true, "vite": true, "webpack": true, "rollup": true, "tsup": true, "vitest": true, "jest": true,
+}
+
+// isKnownInstallTool reports whether every command in a script starts with
+// a well-known build or hook tool.
+func isKnownInstallTool(script string) bool {
+	parts := strings.FieldsFunc(script, func(r rune) bool { return r == ';' || r == '&' || r == '|' })
+	if len(parts) == 0 {
+		return false
+	}
+	for _, p := range parts {
+		fields := strings.Fields(p)
+		if len(fields) == 0 || !knownInstallTools[fields[0]] {
+			return false
+		}
+	}
+	return true
 }
 
 func isNonRegistrySpec(spec string) bool {

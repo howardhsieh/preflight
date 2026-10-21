@@ -21,27 +21,49 @@ func hasPrefix(prefixes ...string) func([]byte) bool {
 	}
 }
 
-// magicByExt checks that a file starts with the signature its extension claims.
-var magicByExt = map[string]func([]byte) bool{
-	".png":   hasPrefix("\x89PNG\r\n\x1a\n"),
-	".jpg":   hasPrefix("\xff\xd8\xff"),
-	".jpeg":  hasPrefix("\xff\xd8\xff"),
-	".gif":   hasPrefix("GIF87a", "GIF89a"),
-	".ico":   hasPrefix("\x00\x00\x01\x00", "\x89PNG"),
-	".bmp":   hasPrefix("BM"),
-	".webp":  func(h []byte) bool { return len(h) >= 12 && string(h[:4]) == "RIFF" && string(h[8:12]) == "WEBP" },
-	".woff":  hasPrefix("wOFF"),
-	".woff2": hasPrefix("wOF2"),
-	".ttf":   hasPrefix("\x00\x01\x00\x00", "true", "ttcf", "OTTO"),
-	".otf":   hasPrefix("OTTO", "\x00\x01\x00\x00"),
-	".pdf":   hasPrefix("%PDF"),
-	".zip":   hasPrefix("PK\x03\x04", "PK\x05\x06"),
-	".gz":    hasPrefix("\x1f\x8b"),
-	".wasm":  hasPrefix("\x00asm"),
-	".mp4":   func(h []byte) bool { return len(h) >= 8 && string(h[4:8]) == "ftyp" },
+type magicType struct {
+	ext string
+	ok  func([]byte) bool
 }
 
-var nativeExts = map[string]bool{".exe": true, ".dll": true, ".so": true, ".dylib": true, ".node": true, ".bin": true, ".o": true, ".a": true}
+// magicTypes lists the signatures a file must start with to match its
+// extension. Order matters only for naming what a mismatched file really is.
+var magicTypes = []magicType{
+	{".png", hasPrefix("\x89PNG\r\n\x1a\n")},
+	{".jpg", hasPrefix("\xff\xd8\xff")},
+	{".jpeg", hasPrefix("\xff\xd8\xff")},
+	{".gif", hasPrefix("GIF87a", "GIF89a")},
+	{".ico", hasPrefix("\x00\x00\x01\x00", "\x89PNG")},
+	{".bmp", hasPrefix("BM")},
+	{".webp", func(h []byte) bool { return len(h) >= 12 && string(h[:4]) == "RIFF" && string(h[8:12]) == "WEBP" }},
+	{".woff", hasPrefix("wOFF")},
+	{".woff2", hasPrefix("wOF2")},
+	{".ttf", hasPrefix("\x00\x01\x00\x00", "true", "ttcf", "OTTO")},
+	{".otf", hasPrefix("OTTO", "\x00\x01\x00\x00")},
+	{".pdf", hasPrefix("%PDF")},
+	{".zip", hasPrefix("PK\x03\x04", "PK\x05\x06")},
+	{".gz", hasPrefix("\x1f\x8b")},
+	{".wasm", hasPrefix("\x00asm")},
+	{".mp4", func(h []byte) bool { return len(h) >= 8 && string(h[4:8]) == "ftyp" }},
+}
+
+var magicByExt = func() map[string]func([]byte) bool {
+	m := make(map[string]func([]byte) bool, len(magicTypes))
+	for _, t := range magicTypes {
+		m[t.ext] = t.ok
+	}
+	return m
+}()
+
+// actualType names the media type a header really has, or "".
+func actualType(head []byte) string {
+	for _, t := range magicTypes {
+		if t.ok(head) {
+			return strings.TrimPrefix(t.ext, ".")
+		}
+	}
+	return ""
+}
 
 func isNative(h []byte) bool {
 	return hasPrefix("\x7fELF", "\xfe\xed\xfa\xce", "\xfe\xed\xfa\xcf", "\xce\xfa\xed\xfe", "\xcf\xfa\xed\xfe", "MZ")(h) ||
@@ -95,11 +117,9 @@ func detectFilesystem(c *Context) []finding.Finding {
 			continue
 		}
 		if isNative(head) {
-			sev := finding.Medium
-			if nativeExts[e] {
-				sev = finding.Low
-			}
-			out = append(out, newFinding("PF802", sev, finding.TriggerNone, f.Path, 0,
+			// Committed binaries are a smell, not an attack by themselves;
+			// a trigger that runs one is reported as a chain.
+			out = append(out, newFinding("PF802", finding.Low, finding.TriggerNone, f.Path, 0,
 				"Compiled executable committed to the repository"))
 		}
 	}
@@ -123,6 +143,11 @@ func disguised(c *Context, file, e string, head []byte) []finding.Finding {
 		return []finding.Finding{newFinding("PF801", finding.High, finding.TriggerNone, file, 0,
 			fmt.Sprintf("Text file disguised as a %s file", e))}
 	default:
+		if real := actualType(head); real != "" {
+			// A PNG saved as .jpg is sloppy, not dangerous.
+			return []finding.Finding{newFinding("PF801", finding.Info, finding.TriggerNone, file, 0,
+				fmt.Sprintf("File is really a %s, not a %s", real, e))}
+		}
 		return []finding.Finding{newFinding("PF801", finding.Low, finding.TriggerNone, file, 0,
 			fmt.Sprintf("Contents do not match the %s extension", e))}
 	}

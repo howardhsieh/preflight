@@ -251,6 +251,73 @@ func TestVirtualenvIsSummarized(t *testing.T) {
 	}
 }
 
+// Patterns found on popular, benign repositories during the benchmark.
+func TestBenchmarkFalsePositives(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		// fetch() and eval() far apart in a test suite.
+		"tests/lib/change.test.js": "assert(surface('a.py', 'async def fetch(self):'));\n" +
+			strings.Repeat("// padding\n", 400) + "cases.push(['a.js', 'eval(x);']);\n",
+		// Common install hooks.
+		"package.json":         `{"scripts":{"prepare":"husky","postinstall":"prisma generate"}}`,
+		"api/package.json":     `{"scripts":{"postinstall":"node scripts/setup.js"}}`,
+		"api/scripts/setup.js": "console.log('setup')\n",
+		// PNG saved with a .jpg extension, and a committed binary.
+		"img/a.jpg": "\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+		"bin/tool":  "\x7fELF\x02\x01\x01\x00",
+		// Zero-width characters in prose, and injection phrasing in a blog post.
+		"docs/guide.md": "some​text\n\nAttackers write \"ignore all previous instructions\" in comments.\n",
+		// Registry-pinned MCP server.
+		".mcp.json": `{"mcpServers":{"devtools":{"command":"npx","args":["-y","chrome-devtools-mcp@1.10.1"]}}}`,
+	})
+	res := mustScan(t, root, Options{})
+	if res.Verdict != VerdictClean {
+		t.Errorf("verdict = %s (score %d), want CLEAN:\n%s", res.Verdict, res.Score, dump(res))
+	}
+	if f := findRule(res, "PF703"); f != nil {
+		t.Errorf("PF703 fired on far-apart fetch/eval: %+v", f)
+	}
+	want := map[string]finding.Severity{
+		"PF801": finding.Info, "PF802": finding.Low,
+		"PF603": finding.Info, "PF521": finding.Info, "PF511": finding.Medium,
+	}
+	for id, sev := range want {
+		if f := findRule(res, id); f == nil || f.Severity != sev {
+			t.Errorf("%s = %+v, want severity %s", id, f, sev)
+		}
+	}
+	// Known tools are low; a postinstall that runs a repository file stays medium.
+	wantInstall := map[string]finding.Severity{"package.json": finding.Low, "api/package.json": finding.Medium}
+	seen := map[string]bool{}
+	for _, f := range res.Findings {
+		if f.RuleID != "PF301" {
+			continue
+		}
+		seen[f.File] = true
+		if sev, ok := wantInstall[f.File]; !ok || f.Severity != sev {
+			t.Errorf("PF301 %s severity = %s, want %s", f.File, f.Severity, sev)
+		}
+	}
+	for file := range wantInstall {
+		if !seen[file] {
+			t.Errorf("no PF301 finding for %s", file)
+		}
+	}
+}
+
+func TestScoreCapsRepeatedRules(t *testing.T) {
+	var fs []finding.Finding
+	for i := 0; i < 30; i++ {
+		fs = append(fs, finding.Finding{RuleID: "PF603", Severity: finding.Low})
+	}
+	if score, verdict := Score(fs); score != 6 || verdict != VerdictClean {
+		t.Errorf("30 low findings of one rule: score %d verdict %s, want 6 CLEAN", score, verdict)
+	}
+	fs = append(fs, finding.Finding{RuleID: "PF201", Severity: finding.High})
+	if _, verdict := Score(fs); verdict != VerdictReview {
+		t.Errorf("one high finding must yield REVIEW, got %s", verdict)
+	}
+}
+
 func TestEveryEmittedRuleIsDocumented(t *testing.T) {
 	for _, r := range finding.Rules {
 		if got, ok := finding.RuleByID(r.ID); !ok || got.Name == "" || got.Description == "" {

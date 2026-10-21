@@ -94,8 +94,14 @@ func correlate(fs []finding.Finding) []finding.Finding {
 					names = append(names, h.Rule)
 				}
 			}
+			// A chain behind a command the user types (npm start, npm test)
+			// still needs that step; the automatic triggers do not.
+			sev := finding.Critical
+			if f.Trigger == finding.TriggerRun {
+				sev = finding.High
+			}
 			chains = append(chains, finding.Finding{
-				RuleID: rule.ID, Rule: rule.Name, Severity: finding.Critical, Trigger: f.Trigger,
+				RuleID: rule.ID, Rule: rule.Name, Severity: sev, Trigger: f.Trigger,
 				File: f.File, Line: f.Line,
 				Message:  fmt.Sprintf("%s executes %s, which contains: %s", triggerPhrase[f.Trigger], t, strings.Join(names, ", ")),
 				Evidence: f.Evidence, Targets: []string{t},
@@ -133,20 +139,32 @@ func sortFindings(fs []finding.Finding) {
 
 var weights = map[finding.Severity]int{finding.Low: 2, finding.Medium: 8, finding.High: 20, finding.Critical: 40}
 
+// maxPerRule caps how many findings of one rule count towards the score, so
+// a documentation-heavy repository with many zero-width characters is not
+// scored like one with many different problems.
+const maxPerRule = 3
+
+// reviewThreshold is the score at which medium/low findings alone trigger REVIEW.
+const reviewThreshold = 30
+
 // Score turns findings into a 0-100 risk score and a verdict.
 func Score(fs []finding.Finding) (int, string) {
 	score, worst := 0, finding.Info
+	perRule := map[string]int{}
 	for _, f := range fs {
-		score += weights[f.Severity]
 		if f.Severity > worst {
 			worst = f.Severity
+		}
+		perRule[f.RuleID]++
+		if perRule[f.RuleID] <= maxPerRule {
+			score += weights[f.Severity]
 		}
 	}
 	score = min(score, 100)
 	switch {
 	case worst == finding.Critical:
 		return score, VerdictDanger
-	case worst == finding.High || score >= 20:
+	case worst == finding.High || score >= reviewThreshold:
 		return score, VerdictReview
 	default:
 		return score, VerdictClean
