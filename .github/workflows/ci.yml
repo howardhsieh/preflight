@@ -27,4 +27,11 @@ jobs:
       - run: go vet ./...
       - run: go test -race ./...
       - name: Scan this repository with preflight
-        run: go run ./cmd/preflight scan . --fail-on medium
+        # docs/demo holds the generator for the README demo, whose inert
+        # payload strings preflight correctly reports.
+        run: go run ./cmd/preflight scan . --fail-on medium --exclude docs/demo
+      - name: The demo generator must still be caught
+        run: |
+          set -euo pipefail
+          out=$(go run ./cmd/preflight scan docs/demo --fail-on none -f json)
+          echo "$out" | grep -q '"rule_id": "PF702"'
