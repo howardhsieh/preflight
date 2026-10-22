@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"strings"
 	"time"
 
@@ -19,8 +20,18 @@ import (
 	"github.com/howardhsieh/preflight/internal/scan"
 )
 
-// version is set at build time with -ldflags "-X main.version=...".
+// version is set at build time with -ldflags "-X main.version=..." by
+// GoReleaser; `go install ...@vX.Y.Z` builds carry it in the module info.
 var version = "dev"
+
+func init() {
+	if version != "dev" {
+		return
+	}
+	if bi, ok := debug.ReadBuildInfo(); ok && bi.Main.Version != "" && bi.Main.Version != "(devel)" {
+		version = strings.TrimPrefix(bi.Main.Version, "v")
+	}
+}
 
 const usage = `preflight — check a repository before you open it.
 
