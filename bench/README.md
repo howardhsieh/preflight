@@ -12,4 +12,5 @@ python3 bench/summarize.py bench/results.jsonl
 Repositories are fetched with `preflight clone`, so this doubles as an integration test
 of the hardened clone path. Nothing in the cloned repositories is ever executed.
 
-Results are committed in `results.md`; the raw JSONL is not.
+Results and the tuning history are in [results.md](results.md); the raw JSONL is not committed.
+`scan-one.sh` is the per-repository worker that `run.sh` runs in parallel.

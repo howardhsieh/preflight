@@ -54,6 +54,15 @@ Lots of legitimate projects have a `postinstall` script, and lots of minified fi
 `preflight` resolves the files each trigger would run (including `node server` → `server/index.js`)
 and raises a **PF001 auto-exec-chain** finding when the two meet.
 
+## False positives
+
+Scanned against the **1,000 most-starred GitHub repositories**: 92.9% CLEAN, 6.8% REVIEW,
+0.3% DANGER. The three DANGER verdicts are real instances of the mechanism (VS Code's
+own `folderOpen` task, an `.exe` renamed to `.zip`, a corpus of Unicode Tag characters),
+and most REVIEW verdicts are genuine auto-execution configuration: Claude Code hooks,
+dev-container host commands, auto-approved MCP servers. Details and the tuning history
+are in [bench/results.md](bench/results.md).
+
 ## Install
 
 Download a binary from the [releases page](https://github.com/howardhsieh/preflight/releases)
