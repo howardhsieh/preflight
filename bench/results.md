@@ -1,16 +1,22 @@
 # Benchmark: the 1,000 most-starred GitHub repositories
 
-Run on 2026-10-21 with preflight at commit `4b53fc2` against the 1,000 most-starred
-public repositories on GitHub (34k–555k stars), cloned with `preflight clone`
-(shallow, hooks and submodules disabled). Popular repositories are treated as benign,
-so every `DANGER` verdict is a false positive unless noted.
+Re-run on 2026-10-22 with preflight v0.2.0 against the 1,000 most-starred public
+repositories on GitHub (34k–555k stars), cloned with `preflight clone` (shallow, hooks
+and submodules disabled). Popular repositories are treated as benign, so every `DANGER`
+verdict is a false positive unless noted.
 
 | Verdict | Repositories | Share |
 |---|---|---|
-| CLEAN | 927 | **92.9%** |
-| REVIEW | 68 | 6.8% |
+| CLEAN | 924 | **92.8%** |
+| REVIEW | 69 | 6.9% |
 | DANGER | 3 | 0.3% |
 | clone timed out (5 min) | 2 | — |
+
+The v0.2.0 detection fixes (broadened chain resolution to Python/shell/TS payloads, and
+not discounting a payload that a trigger explicitly runs — see the changelog) close
+evasion gaps without moving these numbers: the verdict distribution is unchanged from
+v0.1.0, with zero new false positives, because the stricter rules only fire when a
+trigger executes a file that also carries a payload signal — rare in benign repos.
 
 268 repositories produced no findings at all; 730 produced at least one informational
 or low finding that does not affect the verdict.

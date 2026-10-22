@@ -86,7 +86,7 @@ and raises a **PF001 auto-exec-chain** finding when the two meet.
 
 ## False positives
 
-Scanned against the **1,000 most-starred GitHub repositories**: 92.9% CLEAN, 6.8% REVIEW,
+Scanned against the **1,000 most-starred GitHub repositories**: 92.8% CLEAN, 6.9% REVIEW,
 0.3% DANGER. The three DANGER verdicts are real instances of the mechanism (VS Code's
 own `folderOpen` task, an `.exe` renamed to `.zip`, a corpus of Unicode Tag characters),
 and most REVIEW verdicts are genuine auto-execution configuration: Claude Code hooks,
