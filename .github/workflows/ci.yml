@@ -31,6 +31,7 @@ jobs:
         # payload strings preflight correctly reports.
         run: go run ./cmd/preflight scan . --fail-on medium --exclude docs/demo
       - name: The demo generator must still be caught
+        shell: bash
         run: |
           set -euo pipefail
           out=$(go run ./cmd/preflight scan docs/demo --fail-on none -f json)
