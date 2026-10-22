@@ -51,7 +51,10 @@ runs:
         tmp=$(mktemp -d)
         curl -fsSL -o "$tmp/$file" "$base/$file"
         curl -fsSL -o "$tmp/checksums.txt" "$base/checksums.txt"
-        (cd "$tmp" && grep " $file\$" checksums.txt | sha256sum -c -)
+        # sha256sum on Linux, shasum -a 256 on macOS runners.
+        if command -v sha256sum >/dev/null 2>&1; then verify() { sha256sum -c -; }
+        else verify() { shasum -a 256 -c -; }; fi
+        (cd "$tmp" && grep " $file\$" checksums.txt | verify)
         tar -xzf "$tmp/$file" -C "$tmp" preflight
         install -m 0755 "$tmp/preflight" "$RUNNER_TEMP/preflight"
         "$RUNNER_TEMP/preflight" version

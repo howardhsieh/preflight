@@ -5,6 +5,7 @@ package detect
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"os"
@@ -18,14 +19,20 @@ import (
 	"github.com/howardhsieh/preflight/internal/walker"
 )
 
+// deadlineCheckEvery is how often the per-file loops test the context, so the
+// check itself costs almost nothing.
+const deadlineCheckEvery = 64
+
 // MaxReadBytes caps how much of any single file is read.
 const MaxReadBytes = 4 << 20
 
 // Context gives detectors read-only access to the repository being scanned.
 type Context struct {
-	Root  string
-	Files []walker.File
-	index map[string]int
+	Root     string
+	Files    []walker.File
+	index    map[string]int
+	executed map[string]bool
+	ctx      context.Context
 }
 
 // NewContext indexes the walked files of root.
@@ -34,8 +41,27 @@ func NewContext(root string, files []walker.File) *Context {
 	for i, f := range files {
 		idx[f.Path] = i
 	}
-	return &Context{Root: root, Files: files, index: idx}
+	return &Context{Root: root, Files: files, index: idx, executed: map[string]bool{}}
 }
+
+// SetExecuted records the files that a trigger (a folderOpen task, an install
+// script, an agent hook, …) would run. Content detectors use this to avoid
+// discounting a payload just because it sits in dist/ or tests/.
+func (c *Context) SetExecuted(paths []string) {
+	for _, p := range paths {
+		c.executed[p] = true
+	}
+}
+
+// IsExecuted reports whether a trigger would run this file.
+func (c *Context) IsExecuted(p string) bool { return c.executed[p] }
+
+// SetContext attaches a context whose cancellation or deadline the per-file
+// detector loops honour, so a hostile repository cannot make a scan run forever.
+func (c *Context) SetContext(ctx context.Context) { c.ctx = ctx }
+
+// Expired reports whether the attached context is done.
+func (c *Context) Expired() bool { return c.ctx != nil && c.ctx.Err() != nil }
 
 // Lookup returns the file at the given repository-relative path.
 func (c *Context) Lookup(p string) (walker.File, bool) {
@@ -80,18 +106,30 @@ type Detector struct {
 	Run  func(*Context) []finding.Finding
 }
 
-// All returns every detector in a stable order.
-func All() []Detector {
+// TriggerDetectors parse configuration and record which files would run.
+// They are executed first so that content detectors know a file's targets.
+func TriggerDetectors() []Detector {
 	return []Detector{
 		{"vscode", detectVSCode},
 		{"devcontainer", detectDevcontainer},
 		{"packages", detectPackages},
 		{"git", detectGit},
 		{"agents", detectAgents},
+	}
+}
+
+// ContentDetectors analyze file contents, using Context.IsExecuted.
+func ContentDetectors() []Detector {
+	return []Detector{
 		{"unicode", detectUnicode},
 		{"content", detectContent},
 		{"filesystem", detectFilesystem},
 	}
+}
+
+// All returns every detector in a stable order.
+func All() []Detector {
+	return append(TriggerDetectors(), ContentDetectors()...)
 }
 
 // SplitVirtualenvs removes the contents of Python virtualenvs (directories
@@ -208,10 +246,17 @@ func commandTargets(c *Context, baseDir, cmd string) []string {
 	return out
 }
 
-// resolveFile mirrors how node and shells find a script: exact path, then
-// with a .js extension, then a directory's index.js.
+// resolveExts are the extensions a bare command target may resolve to, across
+// the languages the threat model covers (not only Node).
+var resolveExts = []string{"", ".js", ".cjs", ".mjs", ".ts", ".tsx", ".py", ".sh", ".bash", ".rb", ".pl", ".ps1",
+	"/index.js", "/index.mjs", "/index.ts", "/__main__.py", "/main.py"}
+
+// resolveFile mirrors how interpreters and shells find a script from a bare
+// name: the path itself, then with a language extension, then a package entry
+// point.
 func resolveFile(c *Context, p string) string {
-	for _, cand := range []string{p, p + ".js", p + "/index.js"} {
+	for _, suffix := range resolveExts {
+		cand := p + suffix
 		if f, ok := c.Lookup(cand); ok && !f.Mode.IsDir() {
 			return cand
 		}

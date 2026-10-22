@@ -59,6 +59,9 @@ func Table(w io.Writer, r *scan.Result, opt TableOptions) error {
 	if r.Truncated {
 		fmt.Fprintln(w, paint("\x1b[33m", " ! File limit reached; part of the repository was not scanned.\n"))
 	}
+	if r.Incomplete {
+		fmt.Fprintln(w, paint("\x1b[33m", " ! Scan did not finish (timed out); the verdict is based on a partial scan.\n"))
+	}
 
 	counts := map[finding.Severity]int{}
 	shown := 0
@@ -94,9 +97,14 @@ func Table(w io.Writer, r *scan.Result, opt TableOptions) error {
 	if len(parts) > 0 {
 		fmt.Fprintf(w, " %s\n", strings.Join(parts, ", "))
 	}
+	fmt.Fprintf(w, " %s\n", paint(dim, verdictRule))
 	_, err := fmt.Fprintf(w, " %s\n\n", advice[r.Verdict])
 	return err
 }
+
+// verdictRule explains how findings become a verdict, so the 0–100 score is
+// not mistaken for the thing the verdict is based on.
+const verdictRule = "DANGER = any critical finding; REVIEW = any high finding or score ≥ 50; low and informational findings never change the verdict."
 
 // JSON writes the result as indented JSON.
 func JSON(w io.Writer, r *scan.Result, version string) error {

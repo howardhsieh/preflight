@@ -3,6 +3,7 @@
 package scan
 
 import (
+	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -32,20 +33,31 @@ type Result struct {
 	Score        int               `json:"score"`
 	FilesScanned int               `json:"files_scanned"`
 	Truncated    bool              `json:"truncated,omitempty"`
+	Incomplete   bool              `json:"incomplete,omitempty"`
 	Findings     []finding.Finding `json:"findings"`
 }
 
-// Run scans the repository at root.
-func Run(root string, opt Options) (*Result, error) {
+// Run scans the repository at root. The context bounds the scan: if it is
+// cancelled or its deadline passes mid-scan, Run returns what it has so far
+// with Incomplete set, rather than hanging on a hostile repository.
+func Run(ctx context.Context, root string, opt Options) (*Result, error) {
 	w, err := walker.Walk(root, walker.Options{Exclude: opt.Exclude, MaxFiles: opt.MaxFiles})
 	if err != nil {
 		return nil, err
 	}
 	files, fs := detect.SplitVirtualenvs(w.Files)
-	ctx := detect.NewContext(root, files)
-	for _, d := range detect.All() {
-		fs = append(fs, d.Run(ctx)...)
+	dctx := detect.NewContext(root, files)
+	dctx.SetContext(ctx)
+
+	// Triggers first, so content detectors know which files a trigger runs.
+	for _, d := range detect.TriggerDetectors() {
+		fs = append(fs, d.Run(dctx)...)
 	}
+	dctx.SetExecuted(executedTargets(fs))
+	for _, d := range detect.ContentDetectors() {
+		fs = append(fs, d.Run(dctx)...)
+	}
+
 	fs = dedupe(correlate(fs))
 	sortFindings(fs)
 
@@ -53,7 +65,19 @@ func Run(root string, opt Options) (*Result, error) {
 	if fs == nil {
 		fs = []finding.Finding{}
 	}
-	return &Result{Root: root, Verdict: verdict, Score: score, FilesScanned: len(w.Files), Truncated: w.Truncated, Findings: fs}, nil
+	return &Result{
+		Root: root, Verdict: verdict, Score: score, FilesScanned: len(w.Files),
+		Truncated: w.Truncated, Incomplete: ctx.Err() != nil, Findings: fs,
+	}, nil
+}
+
+// executedTargets collects every file that a trigger finding would run.
+func executedTargets(fs []finding.Finding) []string {
+	var out []string
+	for _, f := range fs {
+		out = append(out, f.Targets...)
+	}
+	return out
 }
 
 var triggerPhrase = map[finding.Trigger]string{

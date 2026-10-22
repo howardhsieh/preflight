@@ -125,7 +125,12 @@ into the new repository.
 | `--fail-on` | `high` | exit 1 if any finding is at least this severe (`none` to disable) |
 | `--min-severity` | `low` | hide table rows below this severity |
 | `--exclude` | | skip paths or globs (repeatable, comma-separated) |
+| `--timeout` | `10m` | give up a clone or scan after this long |
 | `--no-color` | | also honours `NO_COLOR` |
+
+The verdict is severity-driven, not a threshold on the score: **DANGER** = any critical
+finding, **REVIEW** = any high finding or a score of 50 or more, **CLEAN** otherwise.
+Low and informational findings never change the verdict.
 
 ## GitHub Action
 
@@ -138,14 +143,20 @@ permissions:
 
 steps:
   - uses: actions/checkout@v5
-  - uses: howardhsieh/preflight@v0.1.0
+  - id: preflight
+    uses: howardhsieh/preflight@v0.2.0
     with:
+      version: v0.2.0          # pin the binary to the action
       fail-on: high            # none | low | medium | high | critical
       sarif-file: preflight.sarif
-  - uses: github/codeql-action/upload-sarif@v3
+  - if: always()               # upload even when fail-on tripped the step above
+    uses: github/codeql-action/upload-sarif@v3
     with:
       sarif_file: preflight.sarif
 ```
+
+Run the action on a Linux runner (the installer uses `sha256sum`). Pin both the action
+ref and the `version` input to the same tag so the action and the binary cannot drift.
 
 | Input | Default | |
 |---|---|---|

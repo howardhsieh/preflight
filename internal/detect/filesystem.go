@@ -106,7 +106,10 @@ func looksLikeCode(b []byte) bool {
 
 func detectFilesystem(c *Context) []finding.Finding {
 	var out []finding.Finding
-	for _, f := range c.Files {
+	for i, f := range c.Files {
+		if i%deadlineCheckEvery == 0 && c.Expired() {
+			break
+		}
 		if f.LinkTarget != "" {
 			if fd, ok := symlinkEscape(f.Path, f.LinkTarget); ok {
 				out = append(out, fd)
@@ -154,7 +157,7 @@ func disguised(c *Context, file, e string, head []byte) []finding.Finding {
 				fmt.Sprintf("Script code disguised as a %s file", e))
 			fd.Evidence = truncate(string(head), 120)
 			// Run the script heuristics too, since the extension hid it from them.
-			return append([]finding.Finding{fd}, analyzeScript(file, data)...)
+			return append([]finding.Finding{fd}, analyzeScript(file, data, c.IsExecuted(file))...)
 		}
 		trimmed := bytes.TrimSpace(head)
 		switch {

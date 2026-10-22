@@ -49,7 +49,10 @@ Flags (scan, clone):
       --min-severity SEVERITY     Hide table rows below this severity (default low)
       --exclude PATH              Skip a path or glob; repeatable or comma-separated
       --no-color                  Disable colored output
-      --timeout DURATION          Give up the clone after this long (clone only, default 10m)
+      --timeout DURATION          Give up a clone, or a scan, after this long (default 10m)
+
+Verdict: DANGER = any critical finding; REVIEW = any high finding or score >= 50;
+low and informational findings never change the verdict.
 
 Exit codes: 0 no blocking findings, 1 findings at or above --fail-on, 2 error.
 `
@@ -174,10 +177,15 @@ func cmdScan(args []string, stdout, stderr io.Writer, doClone bool) int {
 		return 2
 	}
 
-	res, err := scan.Run(target, scan.Options{Exclude: exclude})
+	sctx, scancel := context.WithTimeout(context.Background(), timeout)
+	defer scancel()
+	res, err := scan.Run(sctx, target, scan.Options{Exclude: exclude})
 	if err != nil {
 		fmt.Fprintln(stderr, "preflight:", err)
 		return 2
+	}
+	if res.Incomplete {
+		fmt.Fprintf(stderr, "preflight: scan did not finish within %s; results are partial\n", timeout)
 	}
 
 	out := stdout

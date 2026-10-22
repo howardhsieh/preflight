@@ -41,7 +41,10 @@ var lettersOnly = regexp.MustCompile(`^[a-z]+$`)
 
 func detectUnicode(c *Context) []finding.Finding {
 	var out []finding.Finding
-	for _, f := range c.Files {
+	for i, f := range c.Files {
+		if i%deadlineCheckEvery == 0 && c.Expired() {
+			break
+		}
 		if !f.Mode.IsRegular() || f.Size == 0 || f.Size > maxUnicodeScanBytes || binaryExts[ext(f.Path)] {
 			continue
 		}

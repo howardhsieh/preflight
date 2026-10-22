@@ -6,6 +6,7 @@ import (
 	"math"
 	"path"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/howardhsieh/preflight/internal/finding"
@@ -105,9 +106,18 @@ func isBundled(p string) bool {
 		underDir(p, "node_modules") || strings.HasSuffix(p, ".map")
 }
 
+// nearOffset reports whether any of the sorted offsets falls within [lo, hi].
+func nearOffset(sorted []int, lo, hi int) bool {
+	i := sort.Search(len(sorted), func(i int) bool { return sorted[i] >= lo })
+	return i < len(sorted) && sorted[i] <= hi
+}
+
 func detectContent(c *Context) []finding.Finding {
 	var out []finding.Finding
-	for _, f := range c.Files {
+	for i, f := range c.Files {
+		if i%deadlineCheckEvery == 0 && c.Expired() {
+			break
+		}
 		if !isScriptFile(c, f) {
 			continue
 		}
@@ -115,23 +125,36 @@ func detectContent(c *Context) []finding.Finding {
 		if !ok || isBinary(data[:min(len(data), 8000)]) {
 			continue
 		}
-		out = append(out, analyzeScript(f.Path, data)...)
+		out = append(out, analyzeScript(f.Path, data, c.IsExecuted(f.Path))...)
 	}
 	return out
 }
 
 // analyzeScript runs the content heuristics on one file. It is also used for
-// disguised files whose extension hides that they contain code.
-func analyzeScript(file string, data []byte) []finding.Finding {
+// disguised files whose extension hides that they contain code. When executed
+// is true a trigger runs this file, so the discounts for generated/test code
+// are not applied: a payload in dist/ or tests/ that an attacker's task runs
+// is not less dangerous for sitting there.
+func analyzeScript(file string, data []byte, executed bool) []finding.Finding {
 	var out []finding.Finding
-	generated := isBundled(file) || isMinified(data)
+	generated := (isBundled(file) || isMinified(data)) && !executed
 	// Decode/eval idioms are normal inside module loaders and test suites.
 	evalSev := finding.High
 	switch {
+	case executed:
+		evalSev = finding.High
 	case generated:
 		evalSev = finding.Low
 	case isTestFile(file):
 		evalSev = finding.Medium
+	}
+
+	// Network calls are found once over the whole file; the per-line loop then
+	// only tests proximity, so a file full of eval() but no network call can
+	// never make the loop run the (heavy) network regex per line.
+	var netStarts []int
+	for _, m := range networkRe.FindAllIndex(data, -1) {
+		netStarts = append(netStarts, m[0])
 	}
 
 	offscreenDone, decodeDone, remoteDone := false, false, false
@@ -162,13 +185,12 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 		// A network call and a dynamic eval anywhere in the same file is
 		// too loose (test suites mention both constantly); require them to
 		// be close together.
-		if !remoteDone && dynExecRe.Match(line) && !defEvalRe.Match(line) {
-			window := data[max(0, lineStart-remoteExecWindow):min(len(data), lineStart+len(line)+remoteExecWindow)]
-			if networkRe.Match(window) {
+		if !remoteDone && len(netStarts) > 0 && dynExecRe.Match(line) && !defEvalRe.Match(line) {
+			if nearOffset(netStarts, lineStart-remoteExecWindow, lineStart+len(line)+remoteExecWindow) {
 				// Frameworks have plugin loaders that fetch and evaluate;
 				// a stager is tiny or evaluates the response outright.
 				sev := min(evalSev, finding.Medium)
-				if evalSev == finding.High && (networkRe.Match(line) || len(data) < smallLoader) {
+				if evalSev == finding.High && (executed || networkRe.Match(line) || len(data) < smallLoader) {
 					sev = finding.High
 				}
 				fd := newFinding("PF703", sev, finding.TriggerNone, file, lineNo,
@@ -184,7 +206,7 @@ func analyzeScript(file string, data []byte) []finding.Finding {
 	if !bundled {
 		if loc := findEncodedBlob(data); loc != nil {
 			sev := finding.Medium
-			if isTestFile(file) {
+			if isTestFile(file) && !executed {
 				sev = finding.Low // fixtures are usually encoded sample data
 			}
 			fd := newFinding("PF704", sev, finding.TriggerNone, file, lineAt(data, loc[0]),
