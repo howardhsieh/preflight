@@ -31,10 +31,12 @@ var sevColor = map[finding.Severity]string{
 	finding.Info:     dim,
 }
 
+// 256-colour badges: terminal themes restyle the basic 16 colours, which
+// can leave white-on-red looking like pink-on-pink.
 var verdictColor = map[string]string{
-	scan.VerdictDanger: "\x1b[1;97;41m",
-	scan.VerdictReview: "\x1b[1;30;43m",
-	scan.VerdictClean:  "\x1b[1;30;42m",
+	scan.VerdictDanger: "\x1b[1;38;5;231;48;5;160m",
+	scan.VerdictReview: "\x1b[1;38;5;232;48;5;214m",
+	scan.VerdictClean:  "\x1b[1;38;5;232;48;5;34m",
 }
 
 var advice = map[string]string{

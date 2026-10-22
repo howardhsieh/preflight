@@ -26,7 +26,7 @@ var (
 	codeTailRe  = regexp.MustCompile(`[(=;{]`)
 	execCallRe  = regexp.MustCompile(`(?:^|[^.\w$])(eval|exec|execSync|spawn|spawnSync|execFile|Function|system|popen|Invoke-Expression|iex)\s*\(`)
 	decodeRe    = regexp.MustCompile(`(\batob\s*\(|Buffer\.from\([^)]*['"](base64|hex)['"]|b64decode|base64\s+(-d|--decode)|FromBase64String|String\.fromCharCode|codecs\.decode|bytes\.fromhex|unhexlify|zlib\.decompress|marshal\.loads)`)
-	networkRe   = regexp.MustCompile(`(\bfetch\s*\(|\baxios\b|https?\.(get|request)\s*\(|XMLHttpRequest|require\(\s*['"](node-fetch|request|got)['"]\s*\)|urllib\.request|urlopen|requests\.(get|post)|Invoke-WebRequest|\bcurl\s|\bwget\s)`)
+	networkRe   = regexp.MustCompile(`(\bfetch\s*\(|\baxios\b|https?\.(get|request)\s*\(|XMLHttpRequest|require\(\s*['"](node-fetch|request|got|https?|http2|net|dns|undici)['"]\s*\)|from\s+['"](node:)?(https?|net|undici)['"]|urllib\.request|urlopen|requests\.(get|post)|Invoke-WebRequest|\bcurl\s|\bwget\s)`)
 	// Dynamic evaluation of a *variable*: eval(x), not eval("literal"),
 	// not a method named eval (cdp.eval), not RegExp.exec(), not def eval(.
 	dynExecRe   = regexp.MustCompile(`(?:^|[^.\w$])(eval\s*\(\s*[A-Za-z_$][\w$.]*\s*[(),]|new\s+Function\s*\(|vm\.runIn\w*\(|exec\s*\(\s*(compile|requests|urllib|response|resp|r\.text|res\.|data|content|code|payload|src|source)\b)`)
