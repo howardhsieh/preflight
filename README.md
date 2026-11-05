@@ -96,8 +96,10 @@ Scanned against the **1,000 most-starred GitHub repositories**: 92.8% CLEAN, 6.9
 0.3% DANGER. The three DANGER verdicts are real instances of the mechanism (VS Code's
 own `folderOpen` task, an `.exe` renamed to `.zip`, a corpus of Unicode Tag characters),
 and most REVIEW verdicts are genuine auto-execution configuration: Claude Code hooks,
-dev-container host commands, auto-approved MCP servers. Details and the tuning history
-are in [bench/results.md](bench/results.md).
+dev-container host commands, auto-approved MCP servers. The JetBrains, Zed, pre-commit,
+Nix and Gradle/Maven rules were tuned on a further 30-repository sample weighted towards
+projects that ship those files, with no new high or critical findings. Details and the
+tuning history are in [bench/results.md](bench/results.md).
 
 ## Install
 
