@@ -6,6 +6,8 @@ single line of code. This write-up covers the attack, why the existing advice is
 careful", and how I built a static scanner that catches the mechanism without ever
 executing the repository.*
 
+（[繁體中文版](writeup.zh-TW.md)）
+
 ---
 
 ## 1. The attack

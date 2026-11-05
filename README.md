@@ -188,7 +188,7 @@ the downloaded binary against the release checksums before running it.
 ## Further reading
 
 - [How preflight works](docs/writeup.md) — the attack, the trigger × content design,
-  and what 1,000 popular repositories taught the rules.
+  and what 1,000 popular repositories taught the rules. ([繁體中文版](docs/writeup.zh-TW.md))
 - [Benchmark results](bench/results.md).
 
 ## Development
