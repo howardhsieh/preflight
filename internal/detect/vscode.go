@@ -22,6 +22,11 @@ func detectVSCode(c *Context) []finding.Finding {
 				tasks, _ := doc["tasks"].([]any)
 				out = append(out, vscodeTasks(c, f.Path, data, tasks)...)
 			}
+		case inVSCode && path.Base(f.Path) == "launch.json":
+			data, doc, ok := readJSONC(c, f.Path)
+			if ok {
+				out = append(out, vscodeLaunch(c, f.Path, data, doc)...)
+			}
 		case inVSCode && path.Base(f.Path) == "settings.json":
 			data, doc, ok := readJSONC(c, f.Path)
 			if ok {
@@ -80,6 +85,86 @@ func vscodeTasks(c *Context, file string, data []byte, tasks []any) []finding.Fi
 			fmt.Sprintf("Task %q runs automatically when the folder is opened", label))
 		fd.Evidence = truncate(cmd, 300)
 		fd.Targets = commandTargets(c, "", cmd)
+		out = append(out, fd)
+	}
+	return out
+}
+
+// vscodeLaunch reads launch.json. Pressing F5 runs the configuration's
+// preLaunchTask (resolved from the sibling tasks.json), then its program,
+// then postDebugTask. Like npm start this needs a keypress, so it is
+// informational on its own and escalated by the chain rule.
+func vscodeLaunch(c *Context, file string, data []byte, doc map[string]any) []finding.Finding {
+	tasks := map[string]map[string]any{}
+	if _, tdoc, ok := readJSONC(c, path.Join(path.Dir(file), "tasks.json")); ok {
+		list, _ := tdoc["tasks"].([]any)
+		for _, raw := range list {
+			if t, ok := raw.(map[string]any); ok {
+				if label := str(t["label"]); label != "" {
+					tasks[label] = t
+				}
+			}
+		}
+	}
+	taskName := func(v any) string {
+		if m, ok := v.(map[string]any); ok {
+			return str(m["task"])
+		}
+		return str(v)
+	}
+	var out []finding.Finding
+	confs, _ := doc["configurations"].([]any)
+	compounds, _ := doc["compounds"].([]any)
+	for _, raw := range append(confs, compounds...) {
+		cfg, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		var parts, chained []string
+		for _, k := range []string{"preLaunchTask", "postDebugTask"} {
+			name := taskName(cfg[k])
+			if name == "" {
+				continue
+			}
+			if t, ok := tasks[name]; ok {
+				parts = append(parts, taskCommand(t))
+				chained = append(chained, name)
+			} else {
+				parts = append(parts, name) // "npm: build" style or a task not in the repo
+			}
+		}
+		for _, k := range []string{"runtimeExecutable", "program"} {
+			if s := str(cfg[k]); s != "" {
+				parts = append(parts, s)
+			}
+		}
+		for _, k := range []string{"runtimeArgs", "args"} {
+			if a, ok := cfg[k].([]any); ok {
+				parts = append(parts, commandString(a))
+			}
+		}
+		cmd := strings.Join(parts, " ; ")
+		targets := commandTargets(c, "", cmd)
+		risky := riskyCmdRe.MatchString(cmd)
+		if len(targets) == 0 && !risky {
+			continue
+		}
+		name := str(cfg["name"])
+		sev := finding.Info
+		if risky {
+			sev = finding.Low
+		}
+		what := strings.Join(targets, ", ")
+		if what == "" {
+			what = "a risky command"
+		}
+		msg := fmt.Sprintf("Launch configuration %q executes %s", name, what)
+		if len(chained) > 0 {
+			msg += fmt.Sprintf(" (via task %s)", strings.Join(chained, ", "))
+		}
+		fd := newFinding("PF107", sev, finding.TriggerRun, file, lineOf(data, `"`+name+`"`), msg)
+		fd.Evidence = truncate(cmd, 300)
+		fd.Targets = targets
 		out = append(out, fd)
 	}
 	return out

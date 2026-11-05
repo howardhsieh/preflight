@@ -43,15 +43,43 @@ func isPackageRunner(cmd string) bool {
 }
 
 func isAgentInstructionFile(p string) bool {
-	return agentInstructionNames[path.Base(p)] ||
-		underDir(p, ".cursor/rules") || underDir(p, ".claude/commands") ||
-		underDir(p, ".claude/agents") || underDir(p, ".claude/skills") || underDir(p, ".github/instructions")
+	base := path.Base(p)
+	if agentInstructionNames[base] || base == ".clinerules" || base == ".roorules" {
+		return true
+	}
+	for _, dir := range []string{".cursor/rules", ".claude/commands", ".claude/agents", ".claude/skills",
+		".github/instructions", ".github/prompts", ".github/agents", ".windsurf/rules", ".clinerules",
+		".roo/rules", ".kiro/steering", ".junie"} {
+		if underDir(p, dir) {
+			return true
+		}
+	}
+	return false
 }
 
 func isMCPConfig(p string) bool {
 	base, dir := path.Base(p), path.Base(path.Dir(p))
-	return base == ".mcp.json" || (base == "mcp.json" && (dir == ".cursor" || dir == ".vscode" || dir == ".roo")) ||
-		(base == "settings.json" && dir == ".gemini")
+	switch {
+	case base == ".mcp.json", base == "opencode.json", base == "opencode.jsonc":
+		return true
+	case base == "mcp.json":
+		return dir == ".cursor" || dir == ".vscode" || dir == ".roo" || dir == ".codex" ||
+			(dir == "settings" && path.Base(path.Dir(path.Dir(p))) == ".kiro")
+	case base == "settings.json":
+		return dir == ".gemini"
+	case base == "config.toml":
+		return dir == ".codex"
+	}
+	return false
+}
+
+// isAgentHookConfig lists the project files whose hooks run shell commands
+// on agent events: Cursor's .cursor/hooks.json, Gemini CLI's settings and
+// Codex's notify command.
+func isAgentHookConfig(p string) bool {
+	base, dir := path.Base(p), path.Base(path.Dir(p))
+	return (base == "hooks.json" && dir == ".cursor") || (base == "settings.json" && dir == ".gemini") ||
+		(base == "config.toml" && dir == ".codex")
 }
 
 func detectAgents(c *Context) []finding.Finding {
@@ -63,6 +91,9 @@ func detectAgents(c *Context) []finding.Finding {
 		}
 		if isMCPConfig(f.Path) {
 			out = append(out, mcpConfig(c, f.Path)...)
+		}
+		if isAgentHookConfig(f.Path) {
+			out = append(out, agentHooks(c, f.Path)...)
 		}
 		if isAgentInstructionFile(f.Path) || strings.EqualFold(ext(f.Path), ".md") {
 			out = append(out, agentText(c, f.Path)...)
@@ -160,20 +191,100 @@ func hookCommands(v any) []string {
 	return cmds
 }
 
+// agentHooks reports commands that Cursor, Gemini CLI or Codex run on agent
+// events. Cursor and Gemini use nested JSON under "hooks"; Codex has a
+// top-level `notify = [...]` array in config.toml.
+func agentHooks(c *Context, file string) []finding.Finding {
+	var data []byte
+	var doc map[string]any
+	var ok bool
+	if ext(file) == ".toml" {
+		data, doc, ok = readTOML(c, file)
+	} else {
+		data, doc, ok = readJSONC(c, file)
+	}
+	if !ok {
+		return nil
+	}
+	agent := map[string]string{".cursor": "Cursor", ".gemini": "Gemini CLI", ".codex": "Codex"}[path.Base(path.Dir(file))]
+	var out []finding.Finding
+	emit := func(event, cmd string) {
+		sev := finding.Medium
+		if riskyCmdRe.MatchString(cmd) {
+			sev = finding.High
+		}
+		fd := newFinding("PF506", sev, finding.TriggerAgent, file, lineOf(data, event),
+			fmt.Sprintf("%s %s hook runs a shell command", agent, event))
+		fd.Evidence = truncate(cmd, 300)
+		fd.Targets = commandTargets(c, "", cmd)
+		out = append(out, fd)
+	}
+	if hooks, ok := doc["hooks"].(map[string]any); ok {
+		for _, event := range sortedKeys(hooks) {
+			for _, cmd := range nestedCommands(hooks[event]) {
+				emit(event, cmd)
+			}
+		}
+	}
+	if cmd := commandString(doc["notify"]); cmd != "" {
+		emit("notify", cmd)
+	}
+	return out
+}
+
+// nestedCommands collects every "command" string anywhere under v, which
+// covers Claude's {matcher, hooks:[{command}]} layout and Cursor's flat
+// [{command}] layout alike.
+func nestedCommands(v any) []string {
+	var cmds []string
+	switch t := v.(type) {
+	case []any:
+		for _, e := range t {
+			cmds = append(cmds, nestedCommands(e)...)
+		}
+	case map[string]any:
+		if cmd := str(t["command"]); cmd != "" {
+			cmds = append(cmds, cmd)
+		}
+		for _, k := range sortedKeys(t) {
+			if k != "command" {
+				cmds = append(cmds, nestedCommands(t[k])...)
+			}
+		}
+	}
+	return cmds
+}
+
 func mcpConfig(c *Context, file string) []finding.Finding {
-	data, doc, ok := readJSONC(c, file)
+	var data []byte
+	var doc map[string]any
+	var ok bool
+	if ext(file) == ".toml" {
+		data, doc, ok = readTOML(c, file)
+	} else {
+		data, doc, ok = readJSONC(c, file)
+	}
 	if !ok {
 		return nil
 	}
 	servers, ok := doc["mcpServers"].(map[string]any)
 	if !ok {
-		servers, _ = doc["servers"].(map[string]any) // VS Code layout
+		servers, ok = doc["servers"].(map[string]any) // VS Code layout
+	}
+	if !ok {
+		servers, ok = doc["mcp_servers"].(map[string]any) // Codex config.toml
+	}
+	if !ok {
+		servers, _ = doc["mcp"].(map[string]any) // OpenCode
 	}
 	var out []finding.Finding
 	for _, name := range sortedKeys(servers) {
 		s, _ := servers[name].(map[string]any)
 		line := lineOf(data, `"`+name+`"`)
-		if cmd := str(s["command"]); cmd != "" {
+		if line == 0 {
+			line = lineOf(data, name)
+		}
+		if cmd := commandString(s["command"]); cmd != "" {
 			if args, ok := s["args"].([]any); ok {
 				cmd += " " + commandString(args)
 			}

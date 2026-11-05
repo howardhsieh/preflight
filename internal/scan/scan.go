@@ -92,6 +92,27 @@ var triggerPhrase = map[finding.Trigger]string{
 	finding.TriggerAgent:       "Starting an AI coding agent",
 }
 
+// rulePhrase overrides the trigger phrase for rules whose trigger is shared
+// with another tool, so a JetBrains chain does not say "VS Code".
+var rulePhrase = map[string]string{
+	"PF107": "Starting the VS Code debugger (F5)",
+	"PF111": "Opening the project in a JetBrains IDE",
+	"PF112": "Running the JetBrains run configuration",
+	"PF114": "A JetBrains File Watcher (on save)",
+	"PF121": "Zed applying project settings",
+	"PF122": "Zed applying project settings",
+	"PF322": "Entering the Nix shell",
+	"PF404": "Committing with pre-commit installed",
+	"PF405": "Committing with git hooks installed",
+}
+
+func phraseFor(f finding.Finding) string {
+	if p, ok := rulePhrase[f.RuleID]; ok {
+		return p
+	}
+	return triggerPhrase[f.Trigger]
+}
+
 // correlate adds a critical PF001 finding whenever a trigger executes a file
 // that has suspicious content of its own. One signal alone is often benign
 // (many projects have a postinstall script); the combination rarely is.
@@ -134,7 +155,7 @@ func correlate(fs []finding.Finding) []finding.Finding {
 			chains = append(chains, finding.Finding{
 				RuleID: rule.ID, Rule: rule.Name, Severity: sev, Trigger: f.Trigger,
 				File: f.File, Line: f.Line,
-				Message:  fmt.Sprintf("%s executes %s, which contains: %s", triggerPhrase[f.Trigger], t, strings.Join(names, ", ")),
+				Message:  fmt.Sprintf("%s executes %s, which contains: %s", phraseFor(f), t, strings.Join(names, ", ")),
 				Evidence: f.Evidence, Targets: []string{t},
 			})
 		}

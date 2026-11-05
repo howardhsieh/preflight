@@ -111,9 +111,13 @@ type Detector struct {
 func TriggerDetectors() []Detector {
 	return []Detector{
 		{"vscode", detectVSCode},
+		{"jetbrains", detectJetBrains},
+		{"zed", detectZed},
 		{"devcontainer", detectDevcontainer},
 		{"packages", detectPackages},
+		{"build", detectBuild},
 		{"git", detectGit},
+		{"hooks", detectHookManagers},
 		{"agents", detectAgents},
 	}
 }
@@ -214,6 +218,10 @@ var pathVarPrefixes = []string{
 	"${workspaceFolder}/", "${workspaceRoot}/", "${containerWorkspaceFolder}/",
 	"${localWorkspaceFolder}/", "$CLAUDE_PROJECT_DIR/", "${CLAUDE_PROJECT_DIR}/",
 	"$CLAUDE_PLUGIN_ROOT/", "${CLAUDE_PLUGIN_ROOT}/",
+	// JetBrains run configurations and File Watchers.
+	"$PROJECT_DIR$/", "$ProjectFileDir$/", "$ContentRoot$/", "$MODULE_DIR$/", "$MODULE_WORKING_DIR$/",
+	// Zed.
+	"$ZED_WORKTREE_ROOT/", "${ZED_WORKTREE_ROOT}/",
 }
 
 // commandTargets returns repository files referenced by a command line,
