@@ -98,7 +98,7 @@ preflight clone https://github.com/someone/interview-task   # 加固過的 clone
 preflight scan . -f sarif -o preflight.sarif                # 給 GitHub code scanning
 ```
 
-或作為 GitHub Action，`howardhsieh/preflight@v0.2.0`：它會在執行前先驗證 release 的 checksum，並輸出 `verdict` 和 `score`。
+或作為 GitHub Action，`howardhsieh/preflight@v0.3.0`：它會在執行前先驗證 release 的 checksum，並輸出 `verdict` 和 `score`。
 
 原始碼、規則清單和基準測試都在
 [github.com/howardhsieh/preflight](https://github.com/howardhsieh/preflight)。
