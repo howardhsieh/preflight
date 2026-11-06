@@ -68,8 +68,17 @@ The core idea is small. Detectors fall into two families:
   take-home assignments always say "run `npm start`", the `start` and `test` scripts
   too; `devcontainer.json` → lifecycle commands; `.claude/settings.json` → hook commands;
   `.mcp.json` → server commands. Command lines are tokenised, variables such as
-  `${workspaceFolder}` and `$CLAUDE_PROJECT_DIR` are stripped, and each token is resolved
-  the way Node and shells resolve it (`server` → `server.js` → `server/index.js`).
+  `${workspaceFolder}`, `$PROJECT_DIR$` and `$CLAUDE_PROJECT_DIR` are stripped, and each
+  token is resolved the way Node and shells resolve it (`server` → `server.js` →
+  `server/index.js`). The same machinery covers the other editors and tools that run
+  repository configuration without a typed command: JetBrains Startup Tasks
+  (`.idea/startup.xml`, followed through the run configuration's "Before launch" list)
+  and File Watchers, Zed's language-server and formatter paths, VS Code's
+  `preLaunchTask` behind F5, `repo: local` pre-commit hooks, lefthook and
+  simple-git-hooks, Nix `shellHook`s reached through direnv, Gradle and Maven
+  wrappers that download the build tool from a non-official URL, Gradle build scripts
+  that exec or download at import time, `.mvn/jvm.config` Java agents, and the hook
+  and MCP files of Cursor, Gemini CLI, Codex, OpenCode and Kiro.
 - **Content detectors** look at files without caring how they are reached: a script
   whose extension claims it is a font (magic bytes), code after 150+ characters of
   whitespace, decode-and-eval on one line, download-and-eval within 1,500 bytes,

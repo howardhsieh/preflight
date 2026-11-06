@@ -85,3 +85,43 @@ python3 bench/summarize.py bench/results.jsonl
 ```
 
 The raw per-repository results (`results.jsonl`, about 30 MB) are not committed.
+
+## Sample re-run for the new vectors (2026-11-05, unreleased `vectors` branch)
+
+The JetBrains, Zed, launch.json, pre-commit/lefthook, Nix, Gradle/Maven and
+agent-hook rules (PF107, PF111–PF114, PF121–PF122, PF322, PF331–PF334, PF404–PF405,
+PF506) were checked against a 30-repository sample weighted towards projects that
+ship those files: JetBrains/kotlin, JetBrains/compose-multiplatform, JetBrains/ideavim,
+ktorio/ktor, gradle/gradle, elastic/elasticsearch, spring-projects/spring-boot,
+apache/kafka, apache/maven, google/guava, square/okhttp, facebook/react-native,
+psf/black, pre-commit/pre-commit, pre-commit/pre-commit-hooks, home-assistant/core,
+evilmartians/lefthook, zed-industries/zed, NixOS/nix, nix-community/home-manager,
+direnv/direnv, openai/codex, anthropics/claude-code, oven-sh/bun, pytorch/pytorch,
+django/django, pandas-dev/pandas, huggingface/transformers, ansible/ansible,
+microsoft/vscode.
+
+| Verdict | Repositories |
+|---|---|
+| CLEAN | 28 |
+| REVIEW | 1 (oven-sh/bun, on pre-existing rules only) |
+| DANGER | 1 (microsoft/vscode, the known `folderOpen` task) |
+
+No new rule produced a high or critical finding on the sample. What they did produce:
+
+| Rule | Findings | Why it is not a false positive |
+|---|---|---|
+| PF107 (info) | 21 in microsoft/vscode | `launch.json` programs, reported like `npm start` and only escalated by a chain |
+| PF112 / PF113 (info) | kotlin, elasticsearch, ideavim | committed run configurations and plugin requests; a click is still needed |
+| PF322 (low) | nix, home-manager, direnv, bun, codex | `shellHook`s that export variables |
+| PF331 (medium) | kotlin, ktor | `cache-redirector.jetbrains.com`, a mirror of services.gradle.org |
+| PF332 (low / medium) | 7 repos | `exec { commandLine 'git', ... }` (low); elasticsearch fetching `maven-metadata.xml` at build time (medium) |
+| PF334 (low) | apache/maven | `-javaagent` in an integration-test fixture |
+| PF404 (medium) | home-assistant/core | local hooks that run `script/run-in-env.sh`, a repository script |
+| PF405 (low) | lefthook | lefthook's own `lefthook.yml` |
+
+Two rounds of tuning came out of the first pass: PF332's network regex no longer
+matches `readText()` on a file, `import java.net.*` or `HttpClient` inside a string
+(kotlin, gradle, elasticsearch, okhttp), and PF333 ignores plugin repositories whose
+path is interpolated from a property (`${systemTestMavenRepository}`), lives under
+`build/`, or belongs to a documentation sample (gradle's `docs/.../maven-repo`
+snippets), and is high only when the directory actually ships a jar.

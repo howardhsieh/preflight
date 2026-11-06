@@ -66,12 +66,15 @@ Everything is static: the repository is never built, installed or run.
 
 | Trigger | Where | Examples |
 |---|---|---|
-| Opening the folder in VS Code / Cursor | `.vscode/tasks.json`, `.vscode/settings.json`, `*.code-workspace` | `runOn: folderOpen` tasks, `task.allowAutomaticTasks`, interpreter/tool paths pointing into the repo, `NODE_OPTIONS` injection |
+| Opening the folder in VS Code / Cursor | `.vscode/tasks.json`, `.vscode/settings.json`, `.vscode/launch.json`, `*.code-workspace` | `runOn: folderOpen` tasks, `task.allowAutomaticTasks`, interpreter/tool paths pointing into the repo, `NODE_OPTIONS` injection, `preLaunchTask` chains behind F5 |
+| Opening the project in a JetBrains IDE | `.idea/startup.xml`, `.idea/workspace.xml`, `.run/*.run.xml`, `.idea/runConfigurations/`, `.idea/watcherTasks.xml`, `.idea/externalDependencies.xml` | Startup Tasks that run a configuration on open, "Before launch" chains, File Watchers that run a program on save, plugin install prompts |
+| Opening the project in Zed | `.zed/settings.json` | language-server binaries, external formatters and shells pointing into the repo, `terminal.env` injection |
 | Opening the dev container | `devcontainer.json` | `initializeCommand` (runs **on the host**), lifecycle commands, mounting `~/.ssh` / `~/.aws`, `--privileged` |
 | Installing dependencies | `package.json`, `setup.py`, `pyproject.toml`, `build.rs` | `preinstall`/`postinstall`/`prepare`, `curl \| sh`, `core.hooksPath` hijacking, git/URL dependencies, in-tree build backends |
-| Entering the directory | `.envrc` | direnv scripts |
-| Running git | `.gitmodules`, `.gitattributes`, `.husky/` | `ext::` submodule URLs, paths into `.git/`, hook installers |
-| Starting an AI coding agent | `.claude/settings.json`, `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules` … | hooks, auto-approved MCP servers, `ANTHROPIC_BASE_URL` redirection, `bypassPermissions`, prompt injection hidden in HTML comments |
+| Importing or building a JVM project | `gradle-wrapper.properties`, `maven-wrapper.properties`, `*.gradle(.kts)`, `.mvn/jvm.config` | wrapper `distributionUrl` off the official site, build scripts that exec or download at import time, plugin repositories on HTTP / an IP / inside the repo, `-javaagent` |
+| Entering the directory | `.envrc`, `*.nix` | direnv scripts, Nix `shellHook` (automatic through `use flake` / `use nix`) |
+| Running git | `.gitmodules`, `.gitattributes`, `.husky/`, `.pre-commit-config.yaml`, `lefthook.yml`, `simple-git-hooks` | `ext::` submodule URLs, paths into `.git/`, hook installers, `repo: local` pre-commit hooks (public hook repos are never findings) |
+| Starting an AI coding agent | `.claude/settings.json`, `.cursor/hooks.json`, `.gemini/settings.json`, `.codex/config.toml`, `.mcp.json`, `.cursor/mcp.json`, `.vscode/mcp.json`, `.kiro/settings/mcp.json`, `opencode.json`, `CLAUDE.md`, `AGENTS.md`, `.cursorrules`, `.clinerules`, `.windsurf/rules/` … | hooks, auto-approved MCP servers, `ANTHROPIC_BASE_URL` redirection, `bypassPermissions`, prompt injection hidden in HTML comments |
 | Content (any file) | everything | Unicode Tag smuggling (decoded for you), Trojan Source bidi characters, zero-width characters, off-screen code, decode-and-`eval`, download-and-execute, encoded blobs, paste-site payload hosts, raw IP URLs |
 | Filesystem | everything | scripts or executables disguised as fonts/images (magic-byte check), committed binaries, symlinks escaping the repo |
 
@@ -81,8 +84,11 @@ Run `preflight rules` for the full list of rules.
 
 Lots of legitimate projects have a `postinstall` script, and lots of minified files contain
 `eval`. What is rare is a trigger that executes a file which is itself suspicious.
-`preflight` resolves the files each trigger would run (including `node server` → `server/index.js`)
-and raises a **PF001 auto-exec-chain** finding when the two meet.
+`preflight` resolves the files each trigger would run (including `node server` → `server/index.js`,
+and a JetBrains Startup Task through its "Before launch" configurations) and raises a
+**PF001 auto-exec-chain** finding when the two meet. The chain names the trigger in the
+user's terms: "Opening the project in a JetBrains IDE executes …", "A JetBrains File
+Watcher (on save) executes …", "Committing with pre-commit installed executes …".
 
 ## False positives
 
@@ -90,8 +96,10 @@ Scanned against the **1,000 most-starred GitHub repositories**: 92.8% CLEAN, 6.9
 0.3% DANGER. The three DANGER verdicts are real instances of the mechanism (VS Code's
 own `folderOpen` task, an `.exe` renamed to `.zip`, a corpus of Unicode Tag characters),
 and most REVIEW verdicts are genuine auto-execution configuration: Claude Code hooks,
-dev-container host commands, auto-approved MCP servers. Details and the tuning history
-are in [bench/results.md](bench/results.md).
+dev-container host commands, auto-approved MCP servers. The JetBrains, Zed, pre-commit,
+Nix and Gradle/Maven rules were tuned on a further 30-repository sample weighted towards
+projects that ship those files, with no new high or critical findings. Details and the
+tuning history are in [bench/results.md](bench/results.md).
 
 ## Install
 
@@ -184,6 +192,9 @@ the downloaded binary against the release checksums before running it.
 - Heuristics can be evaded by a determined attacker. Treat a `CLEAN` result as "no known
   auto-execution vector", and still open untrusted code in a VM or Codespace.
 - Python virtualenvs are summarised (PF106) rather than scanned.
+- Things that need a typed command with no convention behind it (`Makefile`, `justfile`,
+  Zed tasks) are out of scope; JetBrains run configurations and VS Code launch
+  configurations are reported at *info* because take-home instructions say "click Run".
 
 ## Further reading
 
