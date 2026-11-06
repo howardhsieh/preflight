@@ -164,7 +164,7 @@ preflight clone https://github.com/someone/interview-task   # hardened clone + s
 preflight scan . -f sarif -o preflight.sarif                # for GitHub code scanning
 ```
 
-Or as a GitHub Action, `howardhsieh/preflight@v0.1.0`, which verifies the release
+Or as a GitHub Action, `howardhsieh/preflight@v0.3.0`, which verifies the release
 checksum before running and exposes `verdict` and `score` outputs.
 
 Source, rules and the benchmark are at

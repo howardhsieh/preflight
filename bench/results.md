@@ -86,7 +86,7 @@ python3 bench/summarize.py bench/results.jsonl
 
 The raw per-repository results (`results.jsonl`, about 30 MB) are not committed.
 
-## Sample re-run for the new vectors (2026-11-05, unreleased `vectors` branch)
+## Sample re-run for the new vectors (2026-11-05, released in v0.3.0)
 
 The JetBrains, Zed, launch.json, pre-commit/lefthook, Nix, Gradle/Maven and
 agent-hook rules (PF107, PF111–PF114, PF121–PF122, PF322, PF331–PF334, PF404–PF405,

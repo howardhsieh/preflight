@@ -152,9 +152,9 @@ permissions:
 steps:
   - uses: actions/checkout@v5
   - id: preflight
-    uses: howardhsieh/preflight@v0.2.0
+    uses: howardhsieh/preflight@v0.3.0
     with:
-      version: v0.2.0          # pin the binary to the action
+      version: v0.3.0          # pin the binary to the action
       fail-on: high            # none | low | medium | high | critical
       sarif-file: preflight.sarif
   - if: always()               # upload even when fail-on tripped the step above
